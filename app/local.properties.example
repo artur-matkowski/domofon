@@ -1,0 +1,13 @@
+# Copy to local.properties (gitignored) and adjust to your machine.
+# The Qt Gradle Plugin reads the same qt* keys from local.properties as from
+# gradle.properties: https://doc.qt.io/qtgradleplugin/qt-gradle-plugin-configuring.html
+
+sdk.dir=/home/artur/Android/Sdk
+
+# Must be the VERSIONED Qt directory, not ~/Qt.
+qtPath=/home/artur/Qt/6.11.1
+
+# Only needed if ninja is not on PATH. Both of these ship one:
+#   ~/Android/Sdk/cmake/<ver>/bin/ninja
+#   ~/Qt/Tools/Ninja/ninja
+# qtNinjaPath=/home/artur/Qt/Tools/Ninja/ninja

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Android Auto projection, not Automotive OS. required=false keeps phones eligible. -->
+    <uses-feature android:name="android.hardware.type.automotive" android:required="false"/>
+
+    <application
+        android:name=".DomofonApp"
+        android:allowBackup="false"
+        android:icon="@drawable/ic_gate"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Domofon">
+
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="1"/>
+        <meta-data android:name="com.google.android.gms.car.application"
+                   android:resource="@xml/automotive_app_desc"/>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- IOT is the official category for "control your smart devices from the car". -->
+        <service
+            android:name=".car.DomofonCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService"/>
+                <category android:name="androidx.car.app.category.IOT"/>
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

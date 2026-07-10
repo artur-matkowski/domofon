@@ -1,0 +1,14 @@
+[Unit]
+Description=Domofon MQTT bridge
+After=network-online.target postgresql.service mosquitto.service
+Wants=network-online.target
+
+[Service]
+User=domofon
+EnvironmentFile=/opt/domofon/bridge/bridge.env
+ExecStart=/opt/domofon/bridge/.venv/bin/python /opt/domofon/bridge/bridge.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
