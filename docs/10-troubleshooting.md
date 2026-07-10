@@ -144,9 +144,10 @@ of each section.
   **Checklist**: `CarAppExtender` attached? Extender importance `IMPORTANCE_HIGH`?
   AA settings → notifications enabled for the app?
 
-- **Symptom**: DHU won't start.
-  **Fix**: `libsdl2-2.0-0 libportaudio2` installed; `adb forward tcp:5277 tcp:5277`
-  *after* "Start head unit server" on the phone; only one DHU instance.
+- **Symptom**: DHU won't start, or starts and never projects.
+  **Fix**: see the *Desktop Head Unit* section below — it has the real causes. (`libsdl2`
+  and `libportaudio2` are usually already present and are **not** what's missing; the
+  DHU's unmet dependency is LLVM's `libc++`.)
 
 ## Geofencing
 
@@ -159,6 +160,52 @@ of each section.
 - **Symptom**: fires very late.
   **Fix**: larger radius (300–500 m), `setNotificationResponsiveness` lower; accept
   that geofencing is approximate by design.
+
+## Desktop Head Unit
+
+- **Symptom**: `./desktop-head-unit` exits immediately with
+  `error while loading shared libraries: libc++.so.1: cannot open shared object file`.
+  **Cause**: the DHU is a Google binary linked against LLVM's C++ runtime, not GCC's.
+  Debian installs neither `libc++1` nor `libc++abi1` by default, and nothing in the
+  Android SDK puts them on the loader path.
+  **Fix**: `./scripts/dhu.sh`, which points `LD_LIBRARY_PATH` at the host `libc++` the
+  NDK already ships (`ndk/*/toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu/`).
+  `sudo apt install libc++1 libc++abi1` works too, but needs root for no benefit.
+  Note `ldd` reports the missing library twice — once for the binary, once for its
+  bundled `libusb`; both are satisfied by the same directory.
+
+- **Symptom**: DHU prints `Connecting over ADB to localhost:5277... connected.` and then
+  sits at **"Waiting for phone…"** forever. The phone logs nothing.
+  **Cause**: the head unit server hands its session to the **first** TCP connection it
+  accepts, and never recovers if that connection isn't the DHU. Anything that touches
+  port 5277 first — a `nc` check, a `bash /dev/tcp` probe, an earlier DHU you killed —
+  silently consumes the session. Every subsequent DHU run connects to a socket nobody
+  is servicing.
+  **Fix**: on the phone, stop and restart the head unit server, then run the DHU **once**,
+  as the first thing to connect. `scripts/dhu.sh` deliberately performs no liveness probe
+  for exactly this reason.
+
+- **Symptom**: you want to check whether the head unit server is up before launching.
+  **Cause / why you can't**: there is no non-destructive check.
+  `adb forward` accepts the *local* connection before it knows whether anything listens
+  on the phone, so a dead port looks identical to a live one (verified: forwarding an
+  unused port 5999 still accepts, then EOFs). Reading `/proc/net/tcp` on the phone doesn't
+  work either — Android hides other UIDs' sockets from the `shell` user (uid 2000), so
+  Android Auto's listening socket is simply absent from the table.
+  **Fix**: don't check. Start the server, run the DHU, and read its output.
+
+- **Symptom**: DHU exits immediately after printing its version banner, no window.
+  **Cause**: the DHU reads commands from an interactive console and quits on stdin EOF.
+  Backgrounding it (`nohup ... &`, or any launcher that closes stdin) kills it instantly.
+  **Fix**: run it in a real terminal.
+
+- **Symptom**: the app is installed and runs on the phone, but never appears in the car
+  launcher — in the DHU *or* in a real car.
+  **Cause**: Android Auto lists only Play-distributed apps unless developer mode is on.
+  A sideloaded debug build is invisible until you say otherwise. This is a prerequisite,
+  not a bug: nothing in Logcat will tell you.
+  **Fix**: ch. 07 §4 — Android Auto settings → tap *Version* 10×, then developer settings
+  ⋮ → check **Unknown sources**. Reconnect afterwards.
 
 ## Backlog / future ideas
 

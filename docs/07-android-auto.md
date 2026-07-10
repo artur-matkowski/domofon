@@ -134,13 +134,28 @@ This must be repeated only if you reset Android Auto's data.
 
 ## 5. Testing with the Desktop Head Unit (DHU)
 
-Installed in ch. 01. Ritual:
+Installed in ch. 01. Start the head unit server on the phone (Android Auto → dev
+settings ⋮ → **Start head unit server**), then, **in a real terminal**:
 
 ```bash
-# Phone: Android Auto app → dev settings ⋮ → "Start head unit server"
-adb forward tcp:5277 tcp:5277
-~/Android/Sdk/extras/google/auto/desktop-head-unit
+./scripts/dhu.sh
 ```
+
+That wrapper exists because the raw binary needs two things doing first. It sets up the
+`adb forward tcp:5277 tcp:5277` the DHU expects, and it puts LLVM's `libc++` on
+`LD_LIBRARY_PATH` — the DHU is linked against `libc++.so.1` / `libc++abi.so.1`, which
+Debian does not install by default. Rather than `sudo apt install libc++1 libc++abi1`,
+the script borrows the host copies the Android NDK already ships under
+`ndk/*/toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu/`.
+
+Two rules, both of which cost an afternoon to learn (ch. 10):
+
+- **The DHU must be the first thing to connect** after you start the head unit server.
+  The server gives its session to whatever connects first and never recovers, so a
+  "is the port open?" probe permanently wedges it. If you see *"Waiting for phone…"*,
+  stop and restart the server on the phone, then run the DHU once.
+- **Run it in a terminal.** It reads console commands and exits at stdin EOF, so
+  backgrounding it makes it die instantly with no window.
 
 A car screen opens on your Debian desktop, projecting from the phone. Iterate here —
 it's 10× faster than walking to the car. Keyboard shortcuts and options:
