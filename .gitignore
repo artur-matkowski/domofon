@@ -1,12 +1,6 @@
 # Secrets and machine-local config — never commit
-bridge/bridge.env
 local.properties
 .claude/settings.local.json
-
-# Python
-bridge/.venv/
-__pycache__/
-*.py[cod]
 
 # Gradle / Android
 .gradle/

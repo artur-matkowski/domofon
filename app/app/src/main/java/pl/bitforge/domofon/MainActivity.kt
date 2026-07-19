@@ -1,11 +1,15 @@
 package pl.bitforge.domofon
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -18,6 +22,7 @@ import org.qtproject.qt.android.QtQuickView
 import org.qtproject.qt.android.QtQuickViewContent
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
+import pl.bitforge.domofon.geo.GeofenceManager
 
 /**
  * Hosts the QML UI inside a normal Kotlin activity via [QtQuickView].
@@ -55,8 +60,12 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             .onEach { if (qmlReady) mainQml.gateState = it.state }
             .launchIn(lifecycleScope)
 
+        GateRepository.bridgeOnline
+            .onEach { if (qmlReady) mainQml.bridgeOnline = it }
+            .launchIn(lifecycleScope)
+
         GateNotifier.observe(this, lifecycleScope)
-        requestNotificationPermission()
+        requestPermissions()
     }
 
     override fun onStart() {
@@ -76,6 +85,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
         // Seed the view with the state we already have.
         mainQml.gateState = GateRepository.gateState.value.state
+        mainQml.bridgeOnline = GateRepository.bridgeOnline.value
 
         // QML -> Kotlin: the generated connect<Signal>Listener returns an id you can use
         // to disconnect later. The first lambda argument is the signal name.
@@ -85,15 +95,75 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         }
     }
 
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-        if (granted != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+    private fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Step one: notifications and foreground location, in one ordinary dialog.
+     *
+     * Background location must not be in this batch. Android denies a combined request
+     * outright, which is the single most common way geofencing silently never works.
+     */
+    private fun requestPermissions() {
+        val needed = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                !granted(Manifest.permission.POST_NOTIFICATIONS)
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), REQ_FOREGROUND)
+        else requestBackgroundLocation()
+    }
+
+    /** Step two, only once foreground location is already granted. */
+    private fun requestBackgroundLocation() {
+        if (granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+            GeofenceManager.register(this)
+            return
+        }
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            Log.w(TAG, "foreground location denied — geofence disabled")
+            return
+        }
+        requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQ_BACKGROUND)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            REQ_FOREGROUND -> requestBackgroundLocation()
+            REQ_BACKGROUND ->
+                if (granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+                    GeofenceManager.register(this)
+                } else {
+                    // Android 11+ refuses to grant "Allow all the time" from a dialog at all;
+                    // Settings is the only place it can be turned on.
+                    Toast.makeText(
+                        this,
+                        "Set Location to \"Allow all the time\" — the gate pop-up needs it",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", packageName, null),
+                        )
+                    )
+                }
         }
     }
 
     private companion object {
         const val TAG = "Domofon"
+        const val REQ_FOREGROUND = 1
+        const val REQ_BACKGROUND = 2
     }
 }

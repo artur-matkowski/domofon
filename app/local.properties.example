@@ -11,3 +11,12 @@ qtPath=/home/artur/Qt/6.11.1
 #   ~/Android/Sdk/cmake/<ver>/bin/ninja
 #   ~/Qt/Tools/Ninja/ninja
 # qtNinjaPath=/home/artur/Qt/Tools/Ninja/ninja
+
+# Mosquitto. Read into BuildConfig by app/build.gradle.kts — never committed.
+# Create the account on the broker host with:
+#   docker exec -it mosquitto mosquitto_passwd -b /mosquitto/config/passwd domofon-app '<pw>'
+#   docker kill -s HUP mosquitto
+mqtt.host=192.168.1.10
+mqtt.port=1883
+mqtt.user=domofon-app
+mqtt.pass=CHANGEME

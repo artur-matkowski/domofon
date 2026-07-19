@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- Geofencing (ch. 08). BACKGROUND is not optional: without "Allow all the time" the
+         geofence registers happily and then never fires. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
     <!-- Android Auto projection, not Automotive OS. required=false keeps phones eligible. -->
     <uses-feature android:name="android.hardware.type.automotive" android:required="false"/>
 
@@ -37,6 +43,18 @@
                 <category android:name="androidx.car.app.category.IOT"/>
             </intent-filter>
         </service>
+
+        <!-- All three are exported="false": every one of them can move the gate, and only
+             the system (or our own notification) has any business triggering them. -->
+        <receiver android:name=".gate.GateCommandReceiver" android:exported="false"/>
+
+        <receiver android:name=".geo.GeofenceReceiver" android:exported="false"/>
+
+        <receiver android:name=".geo.BootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

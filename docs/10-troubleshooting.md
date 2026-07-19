@@ -134,7 +134,23 @@ of each section.
 - **Symptom**: app not in car launcher.
   **Checklist (in order)**: AA developer mode + *Unknown sources* enabled? Manifest has
   the `CarAppService` intent-filter with `category.IOT` + `minCarApiLevel` meta-data +
-  `automotive_app_desc`? Reconnect/restart head-unit server after install.
+  `automotive_app_desc`? Reconnect/restart head-unit server after install. **On a real
+  car, Unknown sources is not enough** — see the next entry.
+
+- **Symptom**: app shows fine in the **DHU** but is missing on a **real car** — Android
+  Auto otherwise works there (Maps/Spotify appear), *Unknown sources* is verified on, and
+  nothing shows in Logcat.
+  **Cause**: *Unknown sources* **does not apply to Android for Cars App Library (templated)
+  apps** — only to media, messaging-notification, and parked apps
+  ([Google testing docs](https://developer.android.com/training/cars/testing)). The DHU is
+  a *development* head unit and is exempt; a production car only lists App Library apps
+  installed from a **trusted source**. The manifest, `category.IOT`,
+  `ALLOW_ALL_HOSTS_VALIDATOR`, `minCarApiLevel` are **not** the blocker — the install
+  source is. (Confirmed 2026-07-19 on a VW Passat B8 / MIB3, both wired and wireless.)
+  **Fix**: distribute via Play *without* a full review — **Internal App Sharing** (upload
+  the APK, open the share link on the phone, install via Play) or an **Internal Test
+  Track**. Install that Play-delivered build, then reconnect to the car. Requires a Play
+  Console developer account. See ch. 07 §4.
 
 - **Symptom**: car app opens then immediately closes.
   **Cause**: host validator rejecting the head unit (common with DHU + sideloads).
@@ -199,11 +215,12 @@ of each section.
   Backgrounding it (`nohup ... &`, or any launcher that closes stdin) kills it instantly.
   **Fix**: run it in a real terminal.
 
-- **Symptom**: the app is installed and runs on the phone, but never appears in the car
-  launcher — in the DHU *or* in a real car.
-  **Cause**: Android Auto lists only Play-distributed apps unless developer mode is on.
-  A sideloaded debug build is invisible until you say otherwise. This is a prerequisite,
-  not a bug: nothing in Logcat will tell you.
+- **Symptom**: the app is installed and runs on the phone, but never appears in the
+  **DHU** launcher.
+  **Cause**: the DHU won't list a sideloaded build until Android Auto is in developer mode.
+  A prerequisite, not a bug: nothing in Logcat will tell you. (A **real car** is a
+  *different* story — *Unknown sources* doesn't apply to App Library apps there; see the
+  DHU-vs-car entry in the *Android Auto* section above.)
   **Fix**: ch. 07 §4 — Android Auto settings → tap *Version* 10×, then developer settings
   ⋮ → check **Unknown sources**. Reconnect afterwards.
 

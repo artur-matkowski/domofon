@@ -48,6 +48,10 @@ Update this as you go — it is how future guidance sessions know where you are.
 - [ ] **M4** — Gate control + live state working in the phone UI (ch. 05)
 - [ ] **M5** — Notification arrives on state change with the app backgrounded (ch. 06)
 - [ ] **M6** — Gate control on the car screen + heads-up notification, tested in DHU (ch. 07)
+      <br>*Works in the DHU. The **real-car** smoke test is gated: *Unknown sources* doesn't
+      apply to Car App Library apps, so the car needs a Play trusted-source install (Internal
+      App Sharing / Internal Test Track) + a Play Console account — ch. 07 §4. Not ticked
+      until it shows on the Passat.*
 - [ ] **M7** — Geofence entry triggers the gate pop-up (ch. 08)
 - [ ] **M8** — Hardened: reconnects, off-VPN behavior, battery (ch. 09)
 

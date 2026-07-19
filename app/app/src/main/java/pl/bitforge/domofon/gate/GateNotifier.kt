@@ -17,17 +17,20 @@ import pl.bitforge.domofon.MainActivity
 import pl.bitforge.domofon.R
 
 /**
- * Turns gate-state changes into heads-up notifications.
+ * Turns gate state into heads-up notifications.
  *
  * The [CarAppExtender] is the whole trick behind "pop up while I'm driving": Android Auto
  * cannot be forced to open an app, but a high-importance notification carrying this
- * extender is drawn over whatever the car screen is showing, Google Maps included.
- *
- * ch. 06 moves this into the MqttService so it keeps working with the app backgrounded.
+ * extender is drawn over whatever the car screen is showing, Google Maps included. The
+ * action button on it is as close to "one tap from Maps" as the platform allows — see
+ * docs/07.
  */
 object GateNotifier {
 
     private const val NOTIF_ID_EVENT = 1001
+
+    /** Separate id from [NOTIF_ID_EVENT]: an arrival pop-up must not silently replace it. */
+    private const val NOTIF_ID_GEOFENCE = 1002
 
     /** Notify on every state change *after* the current one — the current state is not news. */
     fun observe(context: Context, scope: CoroutineScope) {
@@ -38,34 +41,74 @@ object GateNotifier {
             .launchIn(scope)
     }
 
-    @SuppressLint("MissingPermission") // guarded by areNotificationsEnabled() below
-    private fun notifyStateChange(context: Context, gs: GateState) {
+    fun notifyStateChange(context: Context, gs: GateState) {
+        post(
+            context = context,
+            notifId = NOTIF_ID_EVENT,
+            title = "Gate: ${gs.state}",
+            text = "Changed at ${gs.changedAt}",
+            state = gs.state,
+        )
+    }
+
+    /** The geofence pop-up: the whole point of the 2 km fence. */
+    fun notifyApproaching(context: Context, gs: GateState?) {
+        val state = gs?.state ?: GateRepository.STATE_UNKNOWN
+        post(
+            context = context,
+            notifId = NOTIF_ID_GEOFENCE,
+            title = "Approaching home — gate: $state",
+            text = if (gs == null) "Gate unreachable — tap to retry" else "Tap to control",
+            state = state,
+            // With no state we do not know which action is right, and offering the wrong
+            // one at 60 km/h is worse than offering none.
+            withAction = gs != null,
+        )
+    }
+
+    @SuppressLint("MissingPermission") // guarded by areNotificationsEnabled()
+    private fun post(
+        context: Context,
+        notifId: Int,
+        title: String,
+        text: String,
+        state: String,
+        withAction: Boolean = true,
+    ) {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
 
         val openApp = PendingIntent.getActivity(
             context,
-            0,
+            notifId,
             Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        val notification = NotificationCompat.Builder(context, DomofonApp.CHANNEL_EVENTS)
+        val carExtender = CarAppExtender.Builder()
+            .setImportance(NotificationManager.IMPORTANCE_HIGH)
+            .setContentIntent(openApp)
+
+        val builder = NotificationCompat.Builder(context, DomofonApp.CHANNEL_EVENTS)
             .setSmallIcon(R.drawable.ic_gate)
-            .setContentTitle("Gate: ${gs.state}")
-            .setContentText("Changed at ${gs.changedAt}")
+            .setContentTitle(title)
+            .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setContentIntent(openApp)
             .setAutoCancel(true)
-            .extend(
-                CarAppExtender.Builder()
-                    .setImportance(NotificationManager.IMPORTANCE_HIGH)
-                    .setContentIntent(openApp)
-                    .build()
-            )
-            .build()
 
-        manager.notify(NOTIF_ID_EVENT, notification)
+        if (withAction) {
+            val primary = GateRepository.primaryAction(state)
+            val icon = if (primary.action == "close") R.drawable.ic_gate_close else R.drawable.ic_gate_open
+            val send = GateCommandReceiver.pendingIntent(context, primary.action, notifId)
+
+            // Both extenders: the car one draws the button on the head unit, the plain one
+            // on the phone. They are separate action lists.
+            carExtender.addAction(icon, primary.label, send)
+            builder.addAction(NotificationCompat.Action.Builder(icon, primary.label, send).build())
+        }
+
+        manager.notify(notifId, builder.extend(carExtender.build()).build())
     }
 }

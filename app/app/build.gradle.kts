@@ -1,7 +1,19 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.qtproject.qt.gradleplugin") version "1.4"
 }
+
+// Broker credentials live in local.properties (gitignored) — this repo is public, so they
+// must never reach git. They land in BuildConfig instead of a settings UI; ch. 04 moves
+// them into the real settings store alongside the RTSP URL.
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+fun localProp(key: String, fallback: String): String = localProps.getProperty(key) ?: fallback
 
 android {
     namespace = "pl.bitforge.domofon"
@@ -20,7 +32,14 @@ android {
         versionName = "0.1"
 
         ndk { abiFilters += "arm64-v8a" }
+
+        buildConfigField("String", "MQTT_HOST", "\"${localProp("mqtt.host", "")}\"")
+        buildConfigField("int", "MQTT_PORT", localProp("mqtt.port", "1883"))
+        buildConfigField("String", "MQTT_USER", "\"${localProp("mqtt.user", "")}\"")
+        buildConfigField("String", "MQTT_PASS", "\"${localProp("mqtt.pass", "")}\"")
     }
+
+    buildFeatures { buildConfig = true }
 
     buildTypes {
         release {
@@ -44,4 +63,11 @@ dependencies {
     // Android Auto. app-projected is what makes the app show up on a projected head unit.
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-projected:1.7.0")
+
+    // MQTT. The -shaded artifact relocates its Netty copy; the plain one collides with
+    // whatever else drags Netty in. See docs/05.
+    implementation("com.hivemq:hivemq-mqtt-client-shaded:1.3.5")
+
+    // Geofencing (ch. 08).
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }

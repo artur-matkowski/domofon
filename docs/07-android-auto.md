@@ -121,16 +121,44 @@ With Android Auto connected, a state change now pops "Gate: opening" **over the 
 car screen** (even over Google Maps); tapping it opens your car app's `GateScreen`.
 This is the requirement "while driving, show me the gate is being opened" — done.
 
-## 4. Enable your (sideloaded) app in Android Auto
+## 4. Getting the app onto a head unit
 
-Google only lists Play-distributed apps by default. For a personal build:
+The DHU and a real car have **different** rules for a sideloaded build — this trips
+everyone up, so keep them straight.
+
+### DHU (development) — *Unknown sources* is enough
+
+The Desktop Head Unit is a *development* head unit; it runs a sideloaded build once
+Android Auto is in developer mode:
 
 1. Phone → **Android Auto app → Settings** → tap *Version* 10× → developer mode.
 2. Developer settings (⋮ menu) → check **Unknown sources**.
-3. Reconnect to the car / restart the head unit server. Your app appears in the
-   launcher (IOT apps show up directly).
+3. Start the head unit server and run the DHU (§5). Your app appears in the launcher.
 
-This must be repeated only if you reset Android Auto's data.
+Repeat only if you reset Android Auto's data.
+
+### A real car — the app must come from a trusted (Play) source
+
+**"Unknown sources" does *not* apply to Android for Cars App Library apps** — it only
+covers media, messaging-notification, and parked apps
+([testing docs](https://developer.android.com/training/cars/testing)). Domofon *is* a
+templated App Library app, so on a real head unit a sideloaded build is invisible no
+matter what that toggle says (and regardless of `ALLOW_ALL_HOSTS_VALIDATOR`, the IOT
+category, or `minCarApiLevel` — those are all already correct). A production car only
+shows App Library apps installed from a **trusted source**. For a personal build that
+means Play, but *without* a full review:
+
+1. **Internal App Sharing** — the quick smoke-test path.
+   [Play Console](https://play.google.com/console/about/internalappsharing/) → *Internal
+   app sharing* → upload the APK (a debug-signed APK is fine). Open the generated link on
+   the phone → install via Play. Reconnect to the car; the Domofon tile now appears.
+2. **Internal Test Track** — better for ongoing testing/updates. Needs a release **AAB**
+   signed with an upload key (add a `signingConfig` to `app/build.gradle.kts`). Add your
+   own Google account as an internal tester, install via the Play test link.
+
+Either route requires a **Google Play Console developer account** (one-time $25 + an
+identity check that can take a day or two). There is no sideload path to a real car for a
+templated app — this is Google's design, not a bug.
 
 ## 5. Testing with the Desktop Head Unit (DHU)
 
@@ -163,7 +191,8 @@ it's 10× faster than walking to the car. Keyboard shortcuts and options:
 
 ## Acceptance test — milestone M6
 
-In the DHU (then once for real in the car):
+In the DHU (then once for real in the car — the car step needs a Play trusted-source
+install per §4, **not** a sideload):
 
 1. App appears in the car launcher; opening it shows the gate grid with live state.
 2. Tapping *Open* drives the real gate (bridge logs show the REST call); the grid
