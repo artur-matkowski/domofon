@@ -1,5 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/settings_container"
+<!--
+  A Toolbar in the layout instead of the theme's decor action bar: under the edge-to-edge
+  enforced by targetSdk 36 the decor bar does not take part in window insets, so it drew
+  over the status bar and the first preference row at once. A layout Toolbar can be padded
+  by the insets listener in SettingsActivity; the decor bar cannot.
+
+  wrap_content + minHeight on the toolbar is what lets that top padding *grow* the bar
+  under the status bar instead of squashing its title.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/settings_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"/>
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/settings_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"/>
+
+    <FrameLayout
+        android:id="@+id/settings_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+
+</LinearLayout>

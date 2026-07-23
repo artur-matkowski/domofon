@@ -7,8 +7,12 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -40,6 +44,9 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     @Volatile
     private var qmlReady = false
 
+    /** True until the first READY of a fresh launch has decided about the setup redirect. */
+    private var firstRun = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -52,8 +59,37 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         qtQuickView.filterTouchesWhenObscured = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) window.setHideOverlayWindows(true)
 
+        // targetSdk 36 enforces edge-to-edge: the window draws behind the status and
+        // navigation bars, and without this the QML settings gear sits under the clock.
+        // The QML view is padded away from the bars via a wrapper whose background matches
+        // the QML root color, so the bar areas read as part of the scene instead of as a
+        // differently-coloured strip.
+        val container = FrameLayout(this).apply {
+            setBackgroundColor(QML_BACKGROUND) // keep in sync with Main.qml root color
+            addView(
+                qtQuickView,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+        // The scene is dark regardless of the system theme, so the bar icons must be light
+        // regardless of the system theme too.
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+
         setContentView(
-            qtQuickView,
+            container,
             ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -68,18 +104,18 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             .onEach { if (qmlReady) mainQml.gateState = it.state }
             .launchIn(lifecycleScope)
 
-        GateRepository.bridgeOnline
-            .onEach { if (qmlReady) mainQml.bridgeOnline = it }
+        GateRepository.bridgeStatus
+            .onEach { if (qmlReady) mainQml.bridgeStatus = it.name.lowercase() }
             .launchIn(lifecycleScope)
 
         GateNotifier.observe(this, lifecycleScope)
 
-        // First run goes straight to setup. There is nothing the main screen can usefully
-        // show before a broker exists, and an app that opens on a dead screen reads as
-        // broken rather than as unconfigured.
-        if (savedInstanceState == null && !ConfigStore.current.isComplete) {
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
+        // First run goes straight to setup — but only from onStatusChanged, once the QML
+        // reports READY. Launching Settings here would race the QML load: if Settings
+        // covers this activity before the load completes, QtQuickView stalls mid-load and
+        // never recovers, and backing out of Settings lands on a dead screen (see
+        // docs/10-troubleshooting.md, blank-screen entry).
+        firstRun = savedInstanceState == null
     }
 
     override fun onStart() {
@@ -103,7 +139,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
         // Seed the view with the state we already have.
         mainQml.gateState = GateRepository.gateState.value.state
-        mainQml.bridgeOnline = GateRepository.bridgeOnline.value
+        mainQml.bridgeStatus = GateRepository.bridgeStatus.value.name.lowercase()
 
         // QML -> Kotlin: the generated connect<Signal>Listener returns an id you can use
         // to disconnect later. The first lambda argument is the signal name.
@@ -115,6 +151,14 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // The theme is NoActionBar so the QML fills the screen; the way back into setup is
         // a control inside the QML itself rather than an options menu that cannot render.
         settingsListenerId = mainQml.connectSettingsRequestedListener { _, _ ->
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
+        // The first-run setup redirect, deferred here from onCreate: the scene is loaded
+        // now, so covering the activity can no longer strand the load. Cleared so a
+        // re-emitted READY cannot re-open Settings over whatever the user is doing.
+        if (firstRun && !ConfigStore.current.isComplete) {
+            firstRun = false
             startActivity(Intent(this, SettingsActivity::class.java))
         }
     }
@@ -143,6 +187,9 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private companion object {
         const val TAG = "Domofon"
         const val REQ_NOTIFICATIONS = 3
+
+        /** Main.qml's root `color: "#1e1e2e"`. Change one and you must change both. */
+        val QML_BACKGROUND = 0xFF1E1E2E.toInt()
 
         /** Process-scoped: enough to stop a start-activity loop nagging the user. */
         var askedForNotifications = false

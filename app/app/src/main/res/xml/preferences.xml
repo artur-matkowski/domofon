@@ -78,6 +78,47 @@
 
     </PreferenceCategory>
 
+    <!-- QoS and keep-alive are pinned per connection (see GateRepository.active), so an
+         edit here lands on the next connect — for the phone UI that is the moment you
+         leave this screen; an already-open Android Auto session keeps its old values
+         until it ends. The category summary says as much. -->
+    <PreferenceCategory
+        app:key="cat.mqtt"
+        app:title="@string/pref_cat_mqtt"
+        app:summary="@string/pref_cat_mqtt_summary"
+        app:initialExpandedChildrenCount="0">
+
+        <ListPreference
+            app:key="mqtt.qosState"
+            app:title="@string/pref_qos_state"
+            app:entries="@array/qos_entries"
+            app:entryValues="@array/qos_values"
+            app:defaultValue="1"
+            app:useSimpleSummaryProvider="true"/>
+
+        <ListPreference
+            app:key="mqtt.qosCommand"
+            app:title="@string/pref_qos_command"
+            app:entries="@array/qos_entries"
+            app:entryValues="@array/qos_values"
+            app:defaultValue="1"
+            app:useSimpleSummaryProvider="true"/>
+
+        <ListPreference
+            app:key="mqtt.qosAvailability"
+            app:title="@string/pref_qos_availability"
+            app:entries="@array/qos_entries"
+            app:entryValues="@array/qos_values"
+            app:defaultValue="1"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="mqtt.keepAliveSeconds"
+            app:title="@string/pref_keepalive"
+            app:summary="@string/pref_keepalive_summary"/>
+
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/pref_cat_home">
 
         <SwitchPreferenceCompat
@@ -107,20 +148,12 @@
 
     <PreferenceCategory app:title="@string/pref_cat_camera">
 
+        <!-- Credentials go inside the URL (rtsp://user:pass@host/…), which is why there
+             are no separate username/password fields and why the summary is supplied in
+             code: the simple provider would print the password on the list row. -->
         <EditTextPreference
             app:key="camera.rtspUrl"
-            app:title="@string/pref_rtsp_url"
-            app:summary="@string/pref_rtsp_url_summary"
-            app:useSimpleSummaryProvider="true"/>
-
-        <EditTextPreference
-            app:key="camera.rtspUsername"
-            app:title="@string/pref_rtsp_user"
-            app:useSimpleSummaryProvider="true"/>
-
-        <EditTextPreference
-            app:key="camera.rtspPassword"
-            app:title="@string/pref_rtsp_password"/>
+            app:title="@string/pref_rtsp_url"/>
 
     </PreferenceCategory>
 

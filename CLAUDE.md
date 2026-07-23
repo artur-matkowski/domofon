@@ -17,6 +17,14 @@ checkboxes in `docs/README.md`.
 > the configuration extraction in ch. 11 — `config/`, the settings screen, the host
 > validator, R8/signing, and the correctness bugs found alongside them. It did **not**
 > extend to milestone feature work. M3 (RTSP) onward remains Artur's to write.
+>
+> **Third exception, 2026-07-23.** After real-car testing surfaced issues, Artur asked
+> Claude to implement the fixes: per-topic-class QoS + keep-alive settings, the
+> tri-state bridge availability (false "unreachable" over VPN), connect-timeout
+> hardening, the `configChanges` fix for the post-Android-Auto phone-UI mis-scale, and
+> the new head-unit camera snapshot (`camera/CameraFrameGrabber` + `PaneTemplate`).
+> That is the full extent — phone-side RTSP playback (M3) and everything after remain
+> Artur's to write.
 
 ## Where things stand
 

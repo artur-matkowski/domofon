@@ -12,6 +12,7 @@ package pl.bitforge.domofon.config
 data class DomofonConfig(
     val broker: Broker,
     val topics: Topics,
+    val mqtt: Mqtt,
     val home: Home,
     val camera: Camera,
     /** Ask for device unlock before a notification button may move the gate. */
@@ -64,6 +65,22 @@ data class DomofonConfig(
         val payloadKey: String,
     )
 
+    /**
+     * MQTT session tuning, one QoS knob per topic class rather than one global one: state
+     * subscriptions, command publishes and the availability subscription have genuinely
+     * different delivery needs, and a lossy radio bridge may support them unevenly.
+     * [ConfigStore] clamps every value on the way in, so nothing here can be out of range.
+     */
+    data class Mqtt(
+        /** QoS for the rx state-topic subscriptions. */
+        val qosState: Int,
+        /** QoS for command publishes on the tx topics. */
+        val qosCommand: Int,
+        /** QoS for the availability (LWT) subscription. */
+        val qosAvailability: Int,
+        val keepAliveSeconds: Int,
+    )
+
     data class Home(
         val enabled: Boolean,
         val latitude: Double?,
@@ -88,13 +105,12 @@ data class DomofonConfig(
     }
 
     data class Camera(
+        /** Carries the camera credentials inline: rtsp://user:pass@host/… */
         val rtspUrl: String,
-        val rtspUsername: String,
-        val rtspPassword: String,
     ) {
         val isConfigured: Boolean get() = rtspUrl.isNotBlank()
 
-        /** Same reasoning as [Broker.toString] — an RTSP URL often embeds credentials. */
+        /** Same reasoning as [Broker.toString] — the URL embeds the credentials. */
         override fun toString(): String = "Camera(configured=$isConfigured)"
     }
 
@@ -116,8 +132,14 @@ data class DomofonConfig(
                 nodeId = Defaults.NODE_ID,
                 payloadKey = Defaults.PAYLOAD_KEY,
             ),
+            mqtt = Mqtt(
+                qosState = Defaults.QOS,
+                qosCommand = Defaults.QOS,
+                qosAvailability = Defaults.QOS,
+                keepAliveSeconds = Defaults.KEEP_ALIVE_S,
+            ),
             home = Home(enabled = false, latitude = null, longitude = null, radiusMeters = Defaults.RADIUS_M),
-            camera = Camera(rtspUrl = "", rtspUsername = "", rtspPassword = ""),
+            camera = Camera(rtspUrl = ""),
             requireUnlockForCommands = true,
         )
     }
@@ -134,6 +156,10 @@ data class DomofonConfig(
         const val AVAILABILITY = "hc12/available"
         const val NODE_ID = 4
         const val PAYLOAD_KEY = "idTarget"
+
+        /** At-least-once — what every topic used before QoS became configurable. */
+        const val QOS = 1
+        const val KEEP_ALIVE_S = 60
 
         /** 2 km — well above docs/08's ~150 m reliability floor; fires ~2 min out at 60 km/h. */
         const val RADIUS_M = 2_000f

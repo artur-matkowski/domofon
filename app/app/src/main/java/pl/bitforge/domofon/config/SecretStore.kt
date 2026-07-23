@@ -12,7 +12,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 /**
  * AES-256/GCM around the two values that must not sit in plaintext on disk: the broker
- * password and the RTSP password.
+ * password and the RTSP URL (which carries the camera credentials inline).
  *
  * The key lives in the Android Keystore, so it is hardware-backed where the phone has a
  * TEE/StrongBox and never leaves it — [encrypt] and [decrypt] pass data through, the raw

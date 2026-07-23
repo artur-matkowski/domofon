@@ -112,4 +112,12 @@ dependencies {
 
     // Geofencing (ch. 08).
     implementation("com.google.android.gms:play-services-location:21.4.0")
+
+    // RTSP frame grabbing for the head-unit snapshot (CameraFrameGrabber). media3 rather
+    // than libVLC: it is the maintained AndroidX stack and costs ~2–3 MB against libVLC's
+    // ~40 MB of native code on top of an already Qt-sized APK. 1.10.1 declares
+    // minCompileSdk=36 — exactly this project's compileSdk, so the next media3 minor may
+    // not build here until compileSdk moves; same trap as core-ktx 1.19.0.
+    implementation("androidx.media3:media3-exoplayer:1.10.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.10.1")
 }

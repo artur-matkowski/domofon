@@ -3,11 +3,13 @@
     <style name="Theme.Domofon" parent="Theme.AppCompat.DayNight.NoActionBar"/>
 
     <!--
-      The settings screen needs the action bar (for the up arrow) that the QML host
-      deliberately does not have, and preferenceTheme, which AppCompat does not set on its
-      own — without it PreferenceFragmentCompat inflates nothing and the screen is blank.
+      NoActionBar here too: the up arrow lives on a Toolbar inside activity_settings.xml,
+      because the theme-provided decor bar cannot be inset away from the status bar under
+      targetSdk 36's edge-to-edge (a decor bar *and* a Toolbar together also crash
+      setSupportActionBar). preferenceTheme is one AppCompat does not set on its own —
+      without it PreferenceFragmentCompat inflates nothing and the screen is blank.
     -->
-    <style name="Theme.Domofon.Settings" parent="Theme.AppCompat.DayNight">
+    <style name="Theme.Domofon.Settings" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="preferenceTheme">@style/PreferenceThemeOverlay</item>
     </style>
 </resources>

@@ -9,6 +9,7 @@ import androidx.car.app.validation.HostValidator
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
 
@@ -42,11 +43,18 @@ class DomofonCarAppService : CarAppService() {
 
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent): Screen {
+            // The session owns the frame grabber the way it owns its MQTT slot. START/STOP
+            // rather than create/destroy: a backgrounded car app must not keep pulling
+            // RTSP video over the VPN for a screen nobody is looking at.
+            val grabber = CameraFrameGrabber(carContext)
+
             // Observer first, then connect. Registering afterwards leaks an owner slot for
             // good if the host tears the session down in between — after which the count
             // never returns to zero and the connection is never rebuilt.
             lifecycle.addObserver(
                 object : DefaultLifecycleObserver {
+                    override fun onStart(owner: LifecycleOwner) = grabber.start()
+                    override fun onStop(owner: LifecycleOwner) = grabber.stop()
                     override fun onDestroy(owner: LifecycleOwner) = GateRepository.disconnect()
                 }
             )
@@ -55,7 +63,7 @@ class DomofonCarAppService : CarAppService() {
             GateRepository.connect()
             GateNotifier.observe(carContext, lifecycleScope)
 
-            return GateScreen(carContext)
+            return GateScreen(carContext, grabber)
         }
     }
 }

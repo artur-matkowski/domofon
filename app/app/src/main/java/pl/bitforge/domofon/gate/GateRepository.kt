@@ -23,11 +23,29 @@ import pl.bitforge.domofon.config.DomofonConfig
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
+import java.util.concurrent.TimeUnit
 
 data class GateState(val state: String, val changedAt: String)
 
 /** A button label paired with the action it sends, so every surface agrees on both. */
 data class PrimaryAction(val label: String, val action: String)
+
+/**
+ * What we know about the bridge, which is genuinely three-valued. A boolean here was the
+ * VPN bug: it defaulted to "offline", and a bridge whose birth message is not retained
+ * never corrects a freshly connected client — so every away-from-home session opened with
+ * "unreachable" as a *default*, presented as a fact.
+ */
+enum class BridgeStatus {
+    /** No availability message seen on this connection — includes "not connected at all". */
+    UNKNOWN,
+
+    /** The availability topic said "online", or a live state message proved it. */
+    ONLINE,
+
+    /** The availability topic said "offline" — the bridge's LWT fired. */
+    OFFLINE,
+}
 
 /**
  * Single source of truth for gate state and commands, and the only class that speaks MQTT.
@@ -69,9 +87,9 @@ object GateRepository {
     private val _gateState = MutableStateFlow(GateState(STATE_UNKNOWN, ""))
     val gateState: StateFlow<GateState> = _gateState.asStateFlow()
 
-    /** `hc12/available`, the service's LWT. False means "no idea", not "gate closed". */
-    private val _bridgeOnline = MutableStateFlow(false)
-    val bridgeOnline: StateFlow<Boolean> = _bridgeOnline.asStateFlow()
+    /** `hc12/available`, the service's LWT — see [BridgeStatus] for why this is not a Boolean. */
+    private val _bridgeStatus = MutableStateFlow(BridgeStatus.UNKNOWN)
+    val bridgeStatus: StateFlow<BridgeStatus> = _bridgeStatus.asStateFlow()
 
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
@@ -132,7 +150,18 @@ object GateRepository {
             .identifier(cfg.broker.clientId)
             .serverHost(cfg.broker.host)
             .serverPort(cfg.broker.port)
-            .automaticReconnectWithDefaultConfig()
+            // HiveMQ's defaults assume a wire that is either up or down. A VPN link is
+            // neither: SYNs can hang for the platform default (minutes) and the default
+            // reconnect backoff tops out at 2 min — so after a VPN flap the app could sit
+            // "connecting" for the entire drive home. Cap the handshake and the backoff.
+            .transportConfig()
+            .socketConnectTimeout(10, TimeUnit.SECONDS)
+            .mqttConnectTimeout(10, TimeUnit.SECONDS)
+            .applyTransportConfig()
+            .automaticReconnect()
+            .initialDelay(1, TimeUnit.SECONDS)
+            .maxDelay(30, TimeUnit.SECONDS)
+            .applyAutomaticReconnect()
             .addConnectedListener {
                 if (myEpoch != epoch) return@addConnectedListener
                 _connected.value = true
@@ -144,7 +173,9 @@ object GateRepository {
             .addDisconnectedListener {
                 if (myEpoch != epoch) return@addDisconnectedListener
                 _connected.value = false
-                _bridgeOnline.value = false
+                // UNKNOWN, not OFFLINE: losing our own connection says nothing about the
+                // bridge, and claiming "unreachable" here is how the VPN bug looked real.
+                _bridgeStatus.value = BridgeStatus.UNKNOWN
             }
 
         // TLS is the user's choice because a broker reachable only inside their own VPN is
@@ -172,7 +203,7 @@ object GateRepository {
             // Clean session: every rx topic is retained, so a queued backlog would only
             // replay state the broker is about to hand us anyway.
             .cleanSession(true)
-            .keepAlive(60)
+            .keepAlive(cfg.mqtt.keepAliveSeconds)
             .send()
             .whenComplete { _, err ->
                 // No host in the message: logcat is readable by adb and by crash reporters,
@@ -194,7 +225,7 @@ object GateRepository {
         val old = client
         client = null
         _connected.value = false
-        _bridgeOnline.value = false
+        _bridgeStatus.value = BridgeStatus.UNKNOWN
 
         // The gate state is only meaningful while we are attached to the broker. Keeping
         // it would let awaitFreshState() return this value instantly on the next connect —
@@ -208,14 +239,24 @@ object GateRepository {
         }
     }
 
+    /**
+     * A clamped config value to the client's enum. The fallback can only trigger if a
+     * caller bypasses [ConfigStore]'s clamping, but `fromCode` returns null and a crash in
+     * the subscribe path would take the whole connection down with it.
+     */
+    private fun qos(code: Int): MqttQos = MqttQos.fromCode(code) ?: MqttQos.AT_LEAST_ONCE
+
     private fun subscribeAll(myEpoch: Int) {
         val c = client ?: return
         if (myEpoch != epoch) return
         val cfg = active
-        (SIGNAL_TO_STATE.keys.map { cfg.topics.rxPrefix + it } + cfg.topics.availability).forEach { topic ->
+        val subscriptions =
+            SIGNAL_TO_STATE.keys.map { cfg.topics.rxPrefix + it to qos(cfg.mqtt.qosState) } +
+                (cfg.topics.availability to qos(cfg.mqtt.qosAvailability))
+        subscriptions.forEach { (topic, topicQos) ->
             c.subscribeWith()
                 .topicFilter(topic)
-                .qos(MqttQos.AT_LEAST_ONCE)
+                .qos(topicQos)
                 .callback(::onMessage)
                 .send()
                 .whenComplete { _, err ->
@@ -232,7 +273,12 @@ object GateRepository {
         val cfg = active
 
         if (topic == cfg.topics.availability) {
-            _bridgeOnline.value = payload == "online"
+            _bridgeStatus.value = when (payload) {
+                "online" -> BridgeStatus.ONLINE
+                "offline" -> BridgeStatus.OFFLINE
+                // Junk on the availability topic is not evidence in either direction.
+                else -> BridgeStatus.UNKNOWN
+            }
             Log.i(TAG, "availability -> $payload")
             return
         }
@@ -258,6 +304,12 @@ object GateRepository {
             Log.w(TAG, "rx $topic has a ts too far in the future — ignored")
             return
         }
+
+        // A live (non-retained) state message can only have been published by a running
+        // bridge, so it is proof of life even when the availability topic never spoke —
+        // the case where the bridge's birth message is not retained and we connected after
+        // it. Retained messages prove nothing: the broker replays them for years.
+        if (!publish.isRetain) _bridgeStatus.value = BridgeStatus.ONLINE
 
         synchronized(tsLock) {
             val current = newestTs
@@ -342,7 +394,7 @@ object GateRepository {
             val acked = CompletableDeferred<Boolean>()
             c.publishWith()
                 .topic(cfg.topics.txPrefix + signal)
-                .qos(MqttQos.AT_LEAST_ONCE)
+                .qos(qos(cfg.mqtt.qosCommand))
                 // NOT retained. hc12-web-service drops retained tx outright (its replay
                 // guard), so a retained command would be silently ignored — and without
                 // that guard it would re-key the transmitter on every service restart.

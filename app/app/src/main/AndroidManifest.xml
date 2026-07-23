@@ -27,9 +27,6 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
-    <!-- Android Auto projection, not Automotive OS. required=false keeps phones eligible. -->
-    <uses-feature android:name="android.hardware.type.automotive" android:required="false"/>
-
     <application
         android:name=".DomofonApp"
         android:allowBackup="false"
@@ -43,9 +40,19 @@
         <meta-data android:name="com.google.android.gms.car.application"
                    android:resource="@xml/automotive_app_desc"/>
 
+        <!-- configChanges: an Android Auto connect/disconnect delivers uiMode (car mode)
+             and possibly density changes. Without this, Android recreates the activity —
+             but the Qt runtime is one QGuiApplication per process and survives, keeping
+             the car-session display metrics; the recreated QtQuickView then lays out
+             against a stale devicePixelRatio and the QML renders wildly mis-scaled
+             (observed: ~20% of one button after unplugging from a real car). Handling the
+             changes in-place keeps the view attached, so Qt only sees a resize — its
+             tested path. Side effect, accepted: rotation no longer recreates the activity
+             either; nothing in onCreate depends on orientation. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:configChanges="uiMode|density|screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

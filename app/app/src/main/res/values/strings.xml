@@ -26,6 +26,15 @@
     <string name="pref_node_id">Gate node id</string>
     <string name="pref_payload_key">Command payload key</string>
 
+    <!-- MQTT session tuning -->
+    <string name="pref_cat_mqtt">MQTT delivery</string>
+    <string name="pref_cat_mqtt_summary">Quality of service per topic. Applied on the next connection. QoS 2 is only as reliable as your bridge\'s support for it.</string>
+    <string name="pref_qos_state">Gate state QoS</string>
+    <string name="pref_qos_command">Command QoS</string>
+    <string name="pref_qos_availability">Availability QoS</string>
+    <string name="pref_keepalive">Keep-alive (seconds)</string>
+    <string name="pref_keepalive_summary">How often the connection is pinged when idle. Default 60. Lower detects a dropped VPN sooner at a small battery cost.</string>
+
     <!-- Home / geofence -->
     <string name="pref_cat_home">Home location</string>
     <string name="pref_geofence">Notify when approaching home</string>
@@ -38,9 +47,7 @@
     <!-- Camera -->
     <string name="pref_cat_camera">Camera</string>
     <string name="pref_rtsp_url">RTSP URL</string>
-    <string name="pref_rtsp_url_summary">Stream from your gate camera.</string>
-    <string name="pref_rtsp_user">RTSP username</string>
-    <string name="pref_rtsp_password">RTSP password</string>
+    <string name="pref_rtsp_url_summary">Stream from your gate camera, e.g. rtsp://user:password@camera-address/path</string>
 
     <!-- Security -->
     <string name="pref_cat_security">Security</string>

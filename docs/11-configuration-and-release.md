@@ -192,8 +192,8 @@ grep -oE 'android:name="android.permission[^"]*"' \
 ```
 
 Expected: `INTERNET`, `POST_NOTIFICATIONS`, `ACCESS_FINE_LOCATION`,
-`ACCESS_BACKGROUND_LOCATION`, `RECEIVE_BOOT_COMPLETED`, `ACCESS_NETWORK_STATE`. Nothing
-else.
+`ACCESS_BACKGROUND_LOCATION`, `RECEIVE_BOOT_COMPLETED`, `ACCESS_NETWORK_STATE`,
+`HIDE_OVERLAY_WINDOWS` (install-time, tapjacking guard — see ch. 10). Nothing else.
 
 ## 5. Play Console runbook
 

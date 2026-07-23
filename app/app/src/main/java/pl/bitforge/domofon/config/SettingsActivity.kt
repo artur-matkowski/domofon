@@ -7,9 +7,13 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.view.View
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
@@ -31,7 +35,23 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
+
+        val toolbar = findViewById<Toolbar>(R.id.settings_toolbar)
+        setSupportActionBar(toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
+
+        // targetSdk 36 enforces edge-to-edge. The toolbar absorbs the top inset (its
+        // background extends under the status bar), the list absorbs the bottom one so the
+        // last preference clears the navigation bar.
+        val container = findViewById<View>(R.id.settings_container)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.settings_root)) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            toolbar.setPadding(bars.left, bars.top, bars.right, 0)
+            container.setPadding(bars.left, 0, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
 
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
@@ -134,14 +154,14 @@ class SettingsActivity : AppCompatActivity() {
 
             numeric(ConfigStore.K_PORT)
             numeric(ConfigStore.K_NODE_ID)
+            numeric(ConfigStore.K_KEEP_ALIVE)
             signedDecimal(ConfigStore.K_LAT)
             signedDecimal(ConfigStore.K_LON)
             numeric(ConfigStore.K_RADIUS)
 
             masked(ConfigStore.K_PASS)
-            masked(ConfigStore.K_RTSP_PASS)
 
-            uri(ConfigStore.K_RTSP_URL)
+            rtspUrl(ConfigStore.K_RTSP_URL)
 
             // Switching the geofence on is the user asking for the feature — and the only
             // moment at which asking for background location is justified.
@@ -164,8 +184,22 @@ class SettingsActivity : AppCompatActivity() {
                 InputType.TYPE_NUMBER_FLAG_SIGNED
         }
 
-        private fun uri(key: String) = edit(key)?.setOnBindEditTextListener {
-            it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        /**
+         * The RTSP URL carries the camera credentials inline (rtsp://user:pass@host/…), so
+         * it gets URI input while typing but a summary that strips the userinfo — the row
+         * must not print the password, same as [masked] fields. Fully masking the input
+         * would make a long URL uneditable, and the value is Keystore-encrypted at rest
+         * like the passwords are (see ConfigStore.SECRET_KEYS).
+         */
+        private fun rtspUrl(key: String) {
+            val pref = edit(key) ?: return
+            pref.setOnBindEditTextListener {
+                it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            }
+            pref.summaryProvider = Preference.SummaryProvider<EditTextPreference> {
+                if (it.text.isNullOrBlank()) getString(R.string.pref_rtsp_url_summary)
+                else it.text!!.replace(USERINFO, "//")
+            }
         }
 
         /**
@@ -182,6 +216,14 @@ class SettingsActivity : AppCompatActivity() {
                 if (it.text.isNullOrEmpty()) getString(R.string.pref_password_unset)
                 else getString(R.string.pref_password_set)
             }
+        }
+
+        private companion object {
+            /**
+             * `//user:pass@` in a URL. Greedy `[^/]*` runs to the *last* `@` before the
+             * path, so a password containing `@` is still stripped in full.
+             */
+            val USERINFO = Regex("//[^/]*@")
         }
     }
 }

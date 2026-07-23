@@ -7,9 +7,12 @@ Rectangle {
     id: root
     color: "#1e1e2e"
 
-    // Kotlin -> QML. GateRepository pushes state in.
+    // Kotlin -> QML. GateRepository pushes state in. bridgeStatus is one of
+    // "online" / "offline" / "unknown" — mirroring GateRepository.BridgeStatus. "unknown"
+    // is the normal state of a fresh connection, not an error, so only "offline" (the
+    // bridge's own LWT) gets the red banner.
     property string gateState: "unknown"
-    property bool bridgeOnline: false
+    property string bridgeStatus: "unknown"
 
     // QML -> Kotlin. Button presses flow out to GateRepository.sendCommand().
     signal commandRequested(string action)
@@ -56,7 +59,9 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             // hc12/available said offline: the state above is the last thing we heard, not
             // necessarily the truth. Saying so beats showing a stale label as fact.
-            visible: !root.bridgeOnline
+            // "unknown" deliberately shows nothing — before the tri-state, a fresh VPN
+            // session wore this banner permanently just because no birth message arrived.
+            visible: root.bridgeStatus === "offline"
             text: "Gate system unreachable"
             color: "#f38ba8"
             font.pixelSize: root.unit * 4

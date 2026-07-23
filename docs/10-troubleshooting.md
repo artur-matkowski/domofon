@@ -96,6 +96,22 @@ of each section.
   **Fix**: replug + accept dialog; check `plugdev` group membership and
   `android-sdk-platform-tools-common` udev rules; `adb kill-server && adb devices`.
 
+- **Symptom**: after an Android Auto session in a real car ends, the phone UI comes back
+  wildly zoomed — roughly 20% of one button fills the screen; killing and restarting the
+  app fixes it.
+  **Cause**: AA projection delivers `uiMode` (car mode) and possibly density
+  configuration changes. Without `android:configChanges`, Android recreates
+  `MainActivity` — but the Qt runtime is one `QGuiApplication` per process and survives
+  the recreation, keeping the car-session display metrics. The new `QtQuickView` then
+  lays out `Main.qml` (every size derives from `unit = min(width,height)/100`) against a
+  stale devicePixelRatio, so the whole scene renders uniformly mis-scaled.
+  **Fix**: `android:configChanges="uiMode|density|screenSize|smallestScreenSize|
+  screenLayout|orientation|keyboardHidden"` on `MainActivity`, so the activity survives
+  and Qt only sees a resize — its tested path. (Fallback if some device still
+  mis-scales: push a `unitOverride` computed in Kotlin from the container size in dp
+  into the QML root, bypassing Qt's own metrics for layout. Not currently wired in.)
+  Fixed 2026-07-23; verify on the real car, not the DHU — the DHU never triggered it.
+
 ## RTSP / video
 
 - **Symptom**: works in `ffplay`, black screen in app.
@@ -128,6 +144,25 @@ of each section.
 - **Symptom**: `mosquitto_pub` command does nothing.
   **Checklist**: ACL allows `phone` to write `domofon/gate/command`? Bridge subscribed
   (check its log at startup)? JSON valid, `action` in the allowlist?
+
+- **Symptom**: over internet + VPN every fresh app start shows *"Gate system
+  unreachable"* (phone) / *"Gate — unreachable"* (car), even though retained gate state
+  displays correctly and commands work. On home Wi-Fi it (mostly) looks fine.
+  **Cause**: availability was a boolean defaulting to *offline*, fed only by the
+  `hc12/available` topic. If the bridge's `online` birth message is **not retained**, a
+  client that connects *after* the bridge started never hears it — and a fresh VPN
+  session always connects after. At home the app was often already connected across
+  bridge restarts, which masked the bug.
+  **Fix (app, 2026-07-23)**: availability is tri-state (`unknown`/`online`/`offline`).
+  Only the bridge's own LWT `offline` shows the banner; `unknown` — the normal opening
+  state of a fresh connection — shows nothing; and any **live** (non-retained) state
+  message counts as proof of life, flipping the status to `online` even if the
+  availability topic never speaks.
+  **Fix (bridge)**: publish the birth `online` with `retain=true`, and register the LWT
+  retained too (docs/02 already prescribes this for the domofon bridge; verify
+  `hc12-web-service` actually does it). **Check** from a *fresh* client:
+  `mosquitto_sub -t 'hc12/available' -v` must print a line immediately — silence means
+  the birth is not retained.
 
 ## Android Auto
 
@@ -288,6 +323,35 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   in the user-visible permission list. Verify with
   `adb shell pm list permissions -f | grep -A4 HIDE_OVERLAY_WINDOWS`.
 
+- **Symptom**: after the first-run redirect to Settings, backing out lands on a blank
+  dark screen — no gate buttons, no settings gear. Taps reach the Qt window (logcat shows
+  `QtWindow.onTouchEvent`) but nothing renders, and `QtQuickView status:` never logged
+  READY for that process. Found on-device 2026-07-23, first cold start after a fresh
+  install.
+  **Cause**: `MainActivity.onCreate` started `SettingsActivity` in the same breath as
+  `qtQuickView.loadContent()`. On a slow-enough cold start (dexopt + Qt lib extraction —
+  i.e. exactly the launch where the redirect always fires) Settings covered the activity
+  before the QML load completed, and a `QtQuickView` stopped mid-load stalls **forever**
+  — it does not resume the load when the activity restarts. The visible "screen" was the
+  wrapper `FrameLayout`'s `#1e1e2e` background. A warm start won the race, which is why
+  the bug looked intermittent.
+  **Fix**: never launch another activity over `MainActivity` until `onStatusChanged`
+  reports `READY` — the first-run redirect now lives there, behind a `firstRun` flag set
+  in `onCreate`. Costs ~¼ s of visible gate screen before Settings opens.
+  **Residual risk (confirmed on-device)**: the stall is Qt behavior, not specific to the
+  redirect. Launching the app with the screen off (`monkey` over adb while dozing), or
+  anything else that stops the activity within the first ~300 ms of a cold start,
+  reproduces it — and restarting the activity does *not* recover; only killing the
+  process does (swipe from recents / `am force-stop`). Root cause per Qt 6.11 sources:
+  `QtNative.runAction` queues `createRootWindow` while the app state is
+  Suspended/Hidden, the state machine in `QtEmbeddedDelegate`'s lifecycle callbacks is
+  guarded by `m_stateDetails.isStarted` (false during early startup), and
+  `QtView.onAppStateDetailsChanged` even removes the view from its parent on
+  `!isStarted` — several ways for the load to wedge with no retry path. If this bites in
+  practice, the app-level cure is a watchdog: in `onStart`, if READY hasn't arrived and
+  the activity was previously stopped, discard the wedged `QtQuickView`, create a fresh
+  one and `loadContent` again.
+
 - **Symptom**: `E/PreferenceGroup: PreferenceCategory should have a key defined if it
   contains an expandable preference`.
   **Cause**: the Topics category uses `initialExpandedChildrenCount="0"`, which makes it
@@ -296,6 +360,32 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   **Fix**: give it `app:key="cat.topics"`. Prefix category keys with `cat.` so they cannot
   collide with `ConfigStore`'s keys — categories hold no value, so nothing is written
   through the data store under them.
+
+- **Symptom**: Play Console shows a signed `.aab` upload apparently succeeding, yet the
+  release still errors with *"You must upload an APK or Android App Bundle"* (plus the
+  two follow-on errors about the release adding/removing no bundles). A separate note
+  says the app *"cannot declare both the device feature
+  `android.hardware.type.automotive` and the metadata
+  `com.google.android.gms.car.application`"*.
+  **Cause**: the scaffold manifest declared
+  `<uses-feature android:name="android.hardware.type.automotive" android:required="false"/>`
+  under the mistaken belief it marks Android Auto capability. It actually declares an
+  **Android Automotive OS** app (app runs in the car's own head unit), while the
+  `com.google.android.gms.car.application` metadata declares **Android Auto**
+  (projected). Play forbids one artifact declaring both, rejects the bundle during
+  post-upload processing, and the release stays empty — the rejection note is easy to
+  miss, so the empty-release errors look like the upload never happened.
+  **Fix**: delete the `uses-feature` line. A projected Android Auto app needs only the
+  metadata + `automotive_app_desc.xml`; no `uses-feature` at all. Rebuild
+  `bundleRelease`, re-upload.
+
+- **Symptom** (preemptive): bumping `androidx.media3` (the head-unit snapshot's RTSP
+  stack) past 1.10.x fails the AAR metadata check with *"requires minCompileSdk 37"*.
+  **Cause**: media3 1.10.1 already declares `minCompileSdk=36` — exactly this project's
+  `compileSdk`; the next minor will move past it. Same trap as core-ktx 1.19.0.
+  **Fix**: stay on 1.10.x until `compileSdk` moves. And remember media3-rtsp is a new
+  reflective surface under R8 — re-test RTSP snapshots in a **release** build after any
+  media3 or R8 change; debug proving nothing still holds.
 
 ## Backlog / future ideas
 

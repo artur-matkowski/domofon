@@ -42,19 +42,26 @@ object ConfigStore : PreferenceDataStore() {
     const val K_NODE_ID = "topics.nodeId"
     const val K_PAYLOAD_KEY = "topics.payloadKey"
 
+    const val K_QOS_STATE = "mqtt.qosState"
+    const val K_QOS_COMMAND = "mqtt.qosCommand"
+    const val K_QOS_AVAILABILITY = "mqtt.qosAvailability"
+    const val K_KEEP_ALIVE = "mqtt.keepAliveSeconds"
+
     const val K_GEOFENCE = "home.enabled"
     const val K_LAT = "home.latitude"
     const val K_LON = "home.longitude"
     const val K_RADIUS = "home.radiusMeters"
 
     const val K_RTSP_URL = "camera.rtspUrl"
-    const val K_RTSP_USER = "camera.rtspUsername"
-    const val K_RTSP_PASS = "camera.rtspPassword"
 
     const val K_REQUIRE_UNLOCK = "security.requireUnlock"
 
-    /** Keys whose values are Keystore-encrypted at rest. */
-    private val SECRET_KEYS = setOf(K_PASS, K_RTSP_PASS)
+    /**
+     * Keys whose values are Keystore-encrypted at rest. The RTSP URL is here because it
+     * carries the camera credentials inline (rtsp://user:pass@host/…) — there are no
+     * separate username/password fields for it.
+     */
+    private val SECRET_KEYS = setOf(K_PASS, K_RTSP_URL)
 
     private lateinit var prefs: SharedPreferences
 
@@ -115,6 +122,16 @@ object ConfigStore : PreferenceDataStore() {
                 nodeId = int(K_NODE_ID, DomofonConfig.Defaults.NODE_ID),
                 payloadKey = str(K_PAYLOAD_KEY, DomofonConfig.Defaults.PAYLOAD_KEY),
             ),
+            // Clamped here, not at the point of use: a hand-edited or corrupted value must
+            // become a legal one before anything downstream (the HiveMQ builder throws on
+            // an out-of-range keepAlive; MqttQos.fromCode returns null) can see it.
+            mqtt = DomofonConfig.Mqtt(
+                qosState = int(K_QOS_STATE, DomofonConfig.Defaults.QOS).coerceIn(0, 2),
+                qosCommand = int(K_QOS_COMMAND, DomofonConfig.Defaults.QOS).coerceIn(0, 2),
+                qosAvailability = int(K_QOS_AVAILABILITY, DomofonConfig.Defaults.QOS).coerceIn(0, 2),
+                keepAliveSeconds = int(K_KEEP_ALIVE, DomofonConfig.Defaults.KEEP_ALIVE_S)
+                    .coerceIn(0, 65_535),
+            ),
             home = DomofonConfig.Home(
                 enabled = prefs.getBoolean(K_GEOFENCE, false),
                 latitude = str(K_LAT, "").toDoubleOrNull(),
@@ -122,9 +139,7 @@ object ConfigStore : PreferenceDataStore() {
                 radiusMeters = str(K_RADIUS, "").toFloatOrNull() ?: DomofonConfig.Defaults.RADIUS_M,
             ),
             camera = DomofonConfig.Camera(
-                rtspUrl = str(K_RTSP_URL, "").trim(),
-                rtspUsername = str(K_RTSP_USER, ""),
-                rtspPassword = secret(K_RTSP_PASS),
+                rtspUrl = secret(K_RTSP_URL).trim(),
             ),
             requireUnlockForCommands = prefs.getBoolean(K_REQUIRE_UNLOCK, true),
         )

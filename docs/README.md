@@ -53,8 +53,18 @@ Update this as you go — it is how future guidance sessions know where you are.
       apply to Car App Library apps, so the car needs a Play trusted-source install (Internal
       App Sharing / Internal Test Track) + a Play Console account — ch. 07 §4. Not ticked
       until it shows on the Passat.*
+      <br>*2026-07-23: head-unit **camera snapshot** added (`CameraFrameGrabber`, media3
+      RTSP → still image in a `PaneTemplate` when a camera URL is configured; grid as
+      before without one). Untested on DHU and car. Also fixed the phone-UI mis-scale
+      after real-car disconnect (`configChanges` on MainActivity — see docs/10).*
 - [ ] **M7** — Geofence entry triggers the gate pop-up (ch. 08)
 - [ ] **M8** — Hardened: reconnects, off-VPN behavior, battery (ch. 09)
+      <br>*2026-07-23: VPN hardening landed — tri-state bridge availability (fixes the
+      false "unreachable" on fresh VPN sessions, docs/10 → MQTT), 10 s connect timeouts +
+      30 s max reconnect backoff, and per-topic-class **QoS + keep-alive settings** (new
+      "MQTT delivery" category, defaults unchanged: QoS 1, 60 s). All untested on device.
+      Bridge-side retained-birth check still to be done (`mosquitto_sub -t
+      'hc12/available' -v` from a fresh client).*
 - [ ] **M9** — Publishable: nothing configured at build time, security review closed, release
       build signed and minified (ch. 11)
       <br>*2026-07-23: config extraction and the security pass are **done and building** —
