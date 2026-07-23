@@ -176,6 +176,13 @@ Debian does not install by default. Rather than `sudo apt install libc++1 libc++
 the script borrows the host copies the Android NDK already ships under
 `ndk/*/toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu/`.
 
+By default it also passes `-c scripts/passat-b8.ini`, which drives the DHU at the real
+target's geometry: the Passat B8's 9.2" Discover Pro is **1280×640**, and the DHU's
+plain default is 800×480 — a layout that looks right there can clip on the car. The DHU
+only accepts 800×480 / 1280×720 / 1920×1080, so the profile renders 1280×720 and
+letterboxes 80px of height off to land on 1280×640. Pass your own `-c yours.ini` (or any
+of the bundled `extras/google/auto/config/*.ini`) and the script steps out of the way.
+
 Two rules, both of which cost an afternoon to learn (ch. 10):
 
 - **The DHU must be the first thing to connect** after you start the head unit server.

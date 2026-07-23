@@ -14,6 +14,24 @@ DHU_DIR="$SDK/extras/google/auto"
 ADB="$SDK/platform-tools/adb"
 PORT=5277
 
+# Match the real target: the Passat B8's 9.2" Discover Pro (1280x640). Without this
+# the DHU falls back to 800x480, and a layout that looks fine there can clip on the
+# car's wider, shorter screen. Skipped if the caller already passed their own -c/--config.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_CONFIG="$HERE/passat-b8.ini"
+have_config=false
+for arg in "$@"; do
+  case "$arg" in -c|--config|-c=*|--config=*) have_config=true ;; esac
+done
+config_args=()
+if [[ "$have_config" == false ]]; then
+  if [[ -f "$DEFAULT_CONFIG" ]]; then
+    config_args=(-c "$DEFAULT_CONFIG")
+  else
+    echo "warning: $DEFAULT_CONFIG missing; DHU will use its 800x480 default, not the Passat's 1280x640." >&2
+  fi
+fi
+
 [[ -x "$DHU_DIR/desktop-head-unit" ]] || {
   echo "DHU not found at $DHU_DIR — install it with:" >&2
   echo "  sdkmanager 'extras;google;auto'" >&2
@@ -48,10 +66,14 @@ done
 
 [[ -t 0 ]] || echo "warning: no tty on stdin; the DHU reads console commands and will exit at EOF." >&2
 
-echo "Forwarded tcp:$PORT; starting DHU (libc++ from ${LIBCXX##*/ndk/})."
+if [[ ${#config_args[@]} -gt 0 ]]; then
+  echo "Forwarded tcp:$PORT; starting DHU as Passat B8 Discover Pro (1280x640), libc++ from ${LIBCXX##*/ndk/})."
+else
+  echo "Forwarded tcp:$PORT; starting DHU (caller-supplied config; libc++ from ${LIBCXX##*/ndk/})."
+fi
 echo "If it sits at 'Waiting for phone...', restart the head unit server on the"
 echo "phone (dev settings -> stop, then start) and run this again."
 
 cd "$DHU_DIR"
 exec env LD_LIBRARY_PATH="$LIBCXX:$DHU_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  ./desktop-head-unit "$@"
+  ./desktop-head-unit "${config_args[@]}" "$@"
