@@ -275,6 +275,28 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   *without* a lock-screen change, suspect two threads racing to generate the key (the
   reason `SecretStore.key()` is `@Synchronized`).
 
+- **Symptom**: the app dies on launch, before anything renders. Logcat crash buffer:
+  `SecurityException: Permission denial: setHideOverlayWindows: HIDE_OVERLAY_WINDOWS`
+  at `MainActivity.onCreate`.
+  **Cause**: `Window.setHideOverlayWindows()` (API 31+, part of the tapjacking guard)
+  requires `android.permission.HIDE_OVERLAY_WINDOWS`. It is not a runtime permission, so
+  there is no prompt to miss and no `checkSelfPermission` that would have caught it — the
+  call simply throws unless the manifest declares it. Found on-device 2026-07-23; the
+  build is clean, only launching the app reveals it.
+  **Fix**: declare `<uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS"/>`.
+  `protectionLevel` is **normal**, so it is granted at install with no prompt and no entry
+  in the user-visible permission list. Verify with
+  `adb shell pm list permissions -f | grep -A4 HIDE_OVERLAY_WINDOWS`.
+
+- **Symptom**: `E/PreferenceGroup: PreferenceCategory should have a key defined if it
+  contains an expandable preference`.
+  **Cause**: the Topics category uses `initialExpandedChildrenCount="0"`, which makes it
+  collapsible. androidx.preference persists the expanded state under the group's key, and
+  the category had none.
+  **Fix**: give it `app:key="cat.topics"`. Prefix category keys with `cat.` so they cannot
+  collide with `ConfigStore`'s keys — categories hold no value, so nothing is written
+  through the data store under them.
+
 ## Backlog / future ideas
 
 (park post-M8 wishes here)

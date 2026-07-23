@@ -41,7 +41,12 @@
 
     </PreferenceCategory>
 
+    <!-- The key is what lets androidx.preference persist this category's expand/collapse
+         state; a collapsed category without one logs an error and forgets it was expanded.
+         The "cat." prefix keeps it out of ConfigStore's key namespace — categories hold no
+         value, so nothing is ever written through the data store under this key. -->
     <PreferenceCategory
+        app:key="cat.topics"
         app:title="@string/pref_cat_topics"
         app:summary="@string/pref_cat_topics_summary"
         app:initialExpandedChildrenCount="0">

@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- Tapjacking guard, paired with filterTouchesWhenObscured in MainActivity. Window
+         .setHideOverlayWindows() throws SecurityException without this — protectionLevel is
+         "normal", so it is granted at install with no prompt and no user-visible entry. -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS"/>
+
     <!-- The Qt AAR's own manifest declares WRITE_EXTERNAL_STORAGE and merges it into ours.
          Nothing in this app writes to shared storage, and an unexplained storage permission
          on a published listing is a question from reviewers we have no reason to invite.
