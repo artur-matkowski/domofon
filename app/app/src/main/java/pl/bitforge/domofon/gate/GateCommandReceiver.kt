@@ -1,15 +1,19 @@
 package pl.bitforge.domofon.gate
 
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import pl.bitforge.domofon.R
+import pl.bitforge.domofon.config.ConfigStore
 
 /**
  * Backs the button inside the heads-up notification, so tapping *Open gate* on the car
@@ -17,6 +21,9 @@ import kotlinx.coroutines.launch
  *
  * A receiver, not a service: the work is one publish. [goAsync] buys roughly ten seconds,
  * and connect + publish over the VPN lands in one or two.
+ *
+ * `exported="false"`, so nothing outside this app can broadcast to it directly. It is not
+ * the only caller worth worrying about, though — see [refuseWhileLocked].
  */
 class GateCommandReceiver : BroadcastReceiver() {
 
@@ -24,6 +31,12 @@ class GateCommandReceiver : BroadcastReceiver() {
         val action = intent.getStringExtra(EXTRA_ACTION) ?: return
         val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, -1)
         val app = context.applicationContext
+
+        if (refuseWhileLocked(app)) {
+            Log.i(TAG, "command '$action' refused: device locked")
+            Toast.makeText(app, R.string.unlock_to_open, Toast.LENGTH_LONG).show()
+            return
+        }
 
         // Dismiss immediately: the tap is acknowledged now, but the gate takes seconds to
         // move, and a notification still sitting there reads as "nothing happened".
@@ -34,10 +47,32 @@ class GateCommandReceiver : BroadcastReceiver() {
             try {
                 val ok = GateRepository.sendCommandAwait(action)
                 Log.i(TAG, "notification action '$action' -> ${if (ok) "sent" else "FAILED"}")
+                // The dismissal above was the acknowledgement. Without this, a command that
+                // never left the phone looks exactly like one that worked.
+                if (!ok) GateNotifier.notifyCommandFailed(app, action)
             } finally {
                 pending.finish()
             }
         }
+    }
+
+    /**
+     * The last line of defence on a physical lock.
+     *
+     * `Action.setAuthenticationRequired(true)` covers the ordinary case — a person tapping
+     * the button on a locked screen — but SystemUI only enforces it for taps it renders.
+     * Anything holding a `PendingIntent` to this receiver can fire it directly, and a
+     * `NotificationListenerService` (notification access is routinely granted to smartwatch
+     * companions, automation apps and notification-history apps) can read
+     * `sbn.notification.actions[0].actionIntent` and `send()` it verbatim, extras and all.
+     * Re-checking here is the only place that reaches both paths.
+     */
+    private fun refuseWhileLocked(context: Context): Boolean {
+        if (!ConfigStore.current.requireUnlockForCommands) return false
+        val keyguard = context.getSystemService(KeyguardManager::class.java) ?: return false
+        // isDeviceSecure(): with no PIN/pattern/biometric configured there is nothing to
+        // unlock, so refusing would just break the feature for no gain in safety.
+        return keyguard.isDeviceSecure && keyguard.isKeyguardLocked
     }
 
     companion object {

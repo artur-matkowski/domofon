@@ -224,8 +224,65 @@ of each section.
   **Fix**: ch. 07 §4 — Android Auto settings → tap *Version* 10×, then developer settings
   ⋮ → check **Unknown sources**. Reconnect afterwards.
 
+## Configuration, R8 and the release build
+
+Added 2026-07-23 during the pre-publication security pass (ch. 11).
+
+- **Symptom**: `minifyRelease` fails with *"Missing classes detected"* naming
+  `brotli4j`, `zstd`, `jzlib`, `log4j`, `conscrypt`, `jetty.alpn` or `tcnative`.
+  **Cause**: Netty (shaded inside the HiveMQ client) probes for optional codecs and TLS
+  providers that exist on neither Android nor this classpath.
+  **Fix**: the `-dontwarn` block in `proguard-rules.pro`. Do not silence it with a blanket
+  `-ignorewarnings`, which would also hide genuine missing references.
+
+- **Symptom**: release build starts and immediately dies with `UnsatisfiedLinkError` or
+  *"Can't find qt_libs"*, while the debug build is fine.
+  **Cause**: resource shrinking. `QtLoader` looks its bootstrap arrays and strings up by
+  *name* through `Resources.getIdentifier()`, so nothing references them in a way AAPT can
+  follow and the shrinker removes them. ProGuard `-keep` rules do not apply to resources.
+  **Fix**: `isShrinkResources = false` (current setting), or add `res/raw/keep.xml` listing
+  `qt_libs`, `load_local_libs`, `bundled_libs`, `use_local_qt_libs`, `bundle_local_qt_libs`,
+  `system_libs_prefix`, `fatal_error_msg`.
+
+- **Symptom**: R8 keep rules for the MQTT client appear to do nothing — release builds
+  still misbehave on connect.
+  **Cause**: HiveMQ's Android documentation gives rules for `io.netty.**` and
+  `org.jctools.**`. Those packages do not exist in the `-shaded` artifact this project
+  uses; the rules match nothing and fail silently.
+  **Fix**: target the relocated prefix — `com.hivemq.client.internal.shaded.io.netty.**`.
+
+- **Symptom**: `READ_EXTERNAL_STORAGE` appears in the merged manifest even after adding
+  `tools:node="remove"` for `WRITE_EXTERNAL_STORAGE`.
+  **Cause**: the Qt AAR requests WRITE, and the manifest merger then *implies* READ from
+  it. The implication is computed from the library manifest, so removing WRITE does not
+  remove the thing derived from it.
+  **Fix**: `tools:node="remove"` for **both**. Confirm in
+  `app/build/outputs/logs/manifest-merger-release-report.txt`, which names the origin of
+  every permission (`IMPLIED from … reason: …`).
+
+- **Symptom**: the Android Auto app opens and instantly closes in a **release** build,
+  having worked in debug.
+  **Cause**: intended. The release host validator allowlists real Android Auto hosts only,
+  and the DHU is an unknown host.
+  **Fix**: test the car screen with the debug build. If a *real car* rejects a release
+  build the same way, that is a genuine bug — check `hosts_allowlist_sample` resolved.
+
+- **Symptom**: the broker password silently becomes empty; the app behaves as if never
+  configured.
+  **Cause**: the Android Keystore drops app keys when the user adds or removes a lock
+  screen. `SecretStore.decrypt` cannot recover and returns "".
+  **Fix**: re-enter it in Settings. Expected behaviour, not corruption — but if it happens
+  *without* a lock-screen change, suspect two threads racing to generate the key (the
+  reason `SecretStore.key()` is `@Synchronized`).
+
 ## Backlog / future ideas
 
 (park post-M8 wishes here)
 
--
+- **Demo mode** — simulated gate state with no broker. Would remove the most likely Play
+  rejection (a reviewer cannot reach your broker or your VPN, so the app looks broken to
+  them) and makes the background-location demo video far easier to record. See ch. 11 §5.4.
+- **Confirmation step on the car screen** — currently one binder-level click moves the
+  gate. The host validator is the real control, but a confirmation template would mean a
+  misconfigured validator is no longer sufficient on its own.
+- **`res/raw/keep.xml`** so resource shrinking can be turned back on.

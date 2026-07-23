@@ -32,6 +32,7 @@ through OpenVPN.
 | 08 | [Geofencing](08-geofencing.md) | auto pop-up | M7 |
 | 09 | [VPN + connectivity handling](09-vpn-connectivity.md) | robustness | M8 |
 | 10 | [Troubleshooting](10-troubleshooting.md) | (living doc) | — |
+| 11 | [Configuration + Play release](11-configuration-and-release.md) | settings, hardening, store | M9 |
 
 ## Progress tracker
 
@@ -54,6 +55,14 @@ Update this as you go — it is how future guidance sessions know where you are.
       until it shows on the Passat.*
 - [ ] **M7** — Geofence entry triggers the gate pop-up (ch. 08)
 - [ ] **M8** — Hardened: reconnects, off-VPN behavior, battery (ch. 09)
+- [ ] **M9** — Publishable: nothing configured at build time, security review closed, release
+      build signed and minified (ch. 11)
+      <br>*2026-07-23: config extraction and the security pass are **done and building** —
+      `ConfigStore` + settings screen, real host validator, R8 + signing config, TLS option,
+      credentials and coordinates out of the source tree. Verified: release APK contains no
+      secrets, all three receivers `exported="false"`, storage permissions gone. Not ticked —
+      **nothing has been re-tested on the phone or the DHU since the refactor**, and the Play
+      Console work in ch. 11 §5 has not started.*
 
 ## Repo layout (target)
 

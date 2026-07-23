@@ -1,22 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Debug-only overlay. It exports GeofenceReceiver so that
+  Debug-only overlay. It registers DebugGeofenceTrigger so that
 
       adb shell am broadcast -a pl.bitforge.domofon.DEBUG_GEOFENCE \
-        -n pl.bitforge.domofon/.geo.GeofenceReceiver
+        -n pl.bitforge.domofon/.geo.DebugGeofenceTrigger
 
-  can exercise the arrival pop-up without driving 2 km out and back. The receiver is
-  android:exported="false" in the real manifest, so a release build cannot be poked this
-  way — which matters, because this entry point opens the gate.
+  can exercise the arrival pop-up without driving 2 km out and back.
+
+  This used to export the real GeofenceReceiver instead, which was a mistake: that
+  receiver feeds its intent straight to GeofencingEvent.fromIntent(), which parses
+  unauthenticated extras. Any app on the device could therefore forge a geofence ENTER —
+  and so choose the exact moment a live "Open gate" button appeared in front of a driver.
+  DebugGeofenceTrigger reads nothing from its intent, and both it and this manifest entry
+  exist only in src/debug, so neither reaches a release build at all.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
         <receiver
-            android:name=".geo.GeofenceReceiver"
-            android:exported="true"
-            tools:replace="android:exported">
+            android:name=".geo.DebugGeofenceTrigger"
+            android:exported="true">
             <intent-filter>
                 <action android:name="pl.bitforge.domofon.DEBUG_GEOFENCE"/>
             </intent-filter>

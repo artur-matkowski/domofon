@@ -32,6 +32,9 @@ object GateNotifier {
     /** Separate id from [NOTIF_ID_EVENT]: an arrival pop-up must not silently replace it. */
     private const val NOTIF_ID_GEOFENCE = 1002
 
+    /** A third id, so a failure report never overwrites the thing that failed. */
+    private const val NOTIF_ID_FAILURE = 1003
+
     /** Notify on every state change *after* the current one — the current state is not news. */
     fun observe(context: Context, scope: CoroutineScope) {
         val app = context.applicationContext
@@ -42,6 +45,7 @@ object GateNotifier {
     }
 
     fun notifyStateChange(context: Context, gs: GateState) {
+        if (gs.state == GateRepository.STATE_UNKNOWN) return // disconnect reset, not news
         post(
             context = context,
             notifId = NOTIF_ID_EVENT,
@@ -51,7 +55,7 @@ object GateNotifier {
         )
     }
 
-    /** The geofence pop-up: the whole point of the 2 km fence. */
+    /** The geofence pop-up: the whole point of the fence. */
     fun notifyApproaching(context: Context, gs: GateState?) {
         val state = gs?.state ?: GateRepository.STATE_UNKNOWN
         post(
@@ -66,6 +70,36 @@ object GateNotifier {
         )
     }
 
+    /**
+     * The command was acknowledged by dismissing the notification and then did not land.
+     * Saying nothing would leave the driver believing the gate is opening when it is not.
+     */
+    @SuppressLint("MissingPermission") // guarded by areNotificationsEnabled()
+    fun notifyCommandFailed(context: Context, action: String) {
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled()) return
+
+        val builder = NotificationCompat.Builder(context, DomofonApp.CHANNEL_EVENTS)
+            .setSmallIcon(R.drawable.ic_gate)
+            .setContentTitle("Couldn't reach the gate")
+            .setContentText("The \"$action\" command was not delivered. Tap to try in the app.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(openApp(context, NOTIF_ID_FAILURE))
+            .setAutoCancel(true)
+
+        manager.notify(NOTIF_ID_FAILURE, builder.extend(CarAppExtender.Builder().build()).build())
+    }
+
+    private fun openApp(context: Context, notifId: Int): PendingIntent =
+        PendingIntent.getActivity(
+            context,
+            notifId,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
     @SuppressLint("MissingPermission") // guarded by areNotificationsEnabled()
     private fun post(
         context: Context,
@@ -78,16 +112,11 @@ object GateNotifier {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
 
-        val openApp = PendingIntent.getActivity(
-            context,
-            notifId,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val open = openApp(context, notifId)
 
         val carExtender = CarAppExtender.Builder()
             .setImportance(NotificationManager.IMPORTANCE_HIGH)
-            .setContentIntent(openApp)
+            .setContentIntent(open)
 
         val builder = NotificationCompat.Builder(context, DomofonApp.CHANNEL_EVENTS)
             .setSmallIcon(R.drawable.ic_gate)
@@ -95,8 +124,19 @@ object GateNotifier {
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setContentIntent(openApp)
+            .setContentIntent(open)
             .setAutoCancel(true)
+            // On a locked phone the full text is hidden. "Approaching home — gate: opened"
+            // on a lock screen tells anyone standing near it both that the owner is on the
+            // way home and that the gate is currently open.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, DomofonApp.CHANNEL_EVENTS)
+                    .setSmallIcon(R.drawable.ic_gate)
+                    .setContentTitle(context.getString(R.string.app_name))
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .build()
+            )
 
         if (withAction) {
             val primary = GateRepository.primaryAction(state)
@@ -106,7 +146,14 @@ object GateNotifier {
             // Both extenders: the car one draws the button on the head unit, the plain one
             // on the phone. They are separate action lists.
             carExtender.addAction(icon, primary.label, send)
-            builder.addAction(NotificationCompat.Action.Builder(icon, primary.label, send).build())
+            builder.addAction(
+                NotificationCompat.Action.Builder(icon, primary.label, send)
+                    // Makes SystemUI demand an unlock before firing this from the shade.
+                    // It is not sufficient on its own — it is not enforced against a direct
+                    // PendingIntent.send() — so GateCommandReceiver re-checks server-side.
+                    .setAuthenticationRequired(true)
+                    .build()
+            )
         }
 
         manager.notify(notifId, builder.extend(carExtender.build()).build())

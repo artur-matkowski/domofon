@@ -12,11 +12,7 @@ qtPath=/home/artur/Qt/6.11.1
 #   ~/Qt/Tools/Ninja/ninja
 # qtNinjaPath=/home/artur/Qt/Tools/Ninja/ninja
 
-# Mosquitto. Read into BuildConfig by app/build.gradle.kts — never committed.
-# Create the account on the broker host with:
-#   docker exec -it mosquitto mosquitto_passwd -b /mosquitto/config/passwd domofon-app '<pw>'
-#   docker kill -s HUP mosquitto
-mqtt.host=192.168.1.10
-mqtt.port=1883
-mqtt.user=domofon-app
-mqtt.pass=CHANGEME
+# No broker settings here any more. They used to be compiled into BuildConfig, which is
+# fine for a private sideloaded build and untenable for a published one — anyone can run
+# `strings` over an APK. Host, port, TLS, credentials, topics, home coordinates and the
+# RTSP URL are all entered in the app's own settings screen and stored on the device.

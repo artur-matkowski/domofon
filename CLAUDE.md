@@ -11,6 +11,12 @@ checkboxes in `docs/README.md`.
 > Android Auto app, Android Auto pop-up). That override covered the scaffold only. From
 > M3 (RTSP) onward the rule above applies again — do not start writing app code because
 > this scaffold exists.
+>
+> **Second exception, 2026-07-23.** Artur got a Play Console account and asked Claude to
+> scan and refactor the app for publication. That override covered the security pass and
+> the configuration extraction in ch. 11 — `config/`, the settings screen, the host
+> validator, R8/signing, and the correctness bugs found alongside them. It did **not**
+> extend to milestone feature work. M3 (RTSP) onward remains Artur's to write.
 
 ## Where things stand
 
@@ -37,8 +43,17 @@ home via **OpenVPN for Android** (always-on, per-app).
 - Android Auto renders only Car App Library templates — QML can't appear on the car
   screen; "pop-up while driving" = high-importance notification with `CarAppExtender`.
 - App speaks **MQTT only** — never Postgres or REST directly (user decision).
-- No 24/7 connection: MQTT connects on app-foreground, AA-session, or geofence-entry
-  (15-min foreground service). See ch. 06.
+- No 24/7 connection: MQTT connects on app-foreground, AA-session, or geofence-entry.
+  See ch. 06 — but note the foreground service sketched there must **not** use
+  `foregroundServiceType="location"`: Play dropped geofencing as an approved location-FGS
+  use case in August 2026. Use `connectedDevice` (it is keeping a network connection to an
+  external device alive, which is what that type is for).
+- **Nothing deployment-specific may be compiled in.** Broker, topics, home coordinates and
+  the RTSP URL live in `ConfigStore` (ch. 11). A published APK is a public artifact;
+  `strings` on it is not a difficult attack. `BuildConfig` carries no app configuration.
+- `HostValidator.ALLOW_ALL_HOSTS_VALIDATOR` is debug-only, permanently. `CarAppService` is
+  exported and unguarded by permission, so the validator is the entire boundary between an
+  arbitrary installed app and the gate opening.
 
 ## Decisions confirmed by Artur (2026-07-10)
 
@@ -51,5 +66,10 @@ home via **OpenVPN for Android** (always-on, per-app).
 ## Conventions
 
 - Dev machine: Debian 13. Phone: arm64-v8a. `minSdk 28`.
-- Package root: `pl.bitforge.domofon`; only `GateRepository` may own MQTT.
-- Secrets (broker/RTSP credentials, `bridge.env`) never committed.
+- Package root: `pl.bitforge.domofon`; only `GateRepository` may own MQTT, and only
+  `ConfigStore` may own settings.
+- Secrets (broker/RTSP credentials, `bridge.env`, `keystore.properties`, `*.jks`) never
+  committed.
+- Release builds must be re-tested on device. Qt and the shaded Netty both resolve classes
+  reflectively, so R8 working in debug proves nothing. Resource shrinking stays **off**
+  until `res/raw/keep.xml` exists — see ch. 11 §4.

@@ -11,23 +11,20 @@ import androidx.core.content.ContextCompat
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import pl.bitforge.domofon.config.ConfigStore
 
 /**
  * The home geofence. Entering it is what surfaces the gate on the car screen.
  *
- * Coordinates are constants for now; ch. 04's settings store is where they belong once it
- * exists, alongside the RTSP URL and the broker details.
+ * The position is the user's, read from [ConfigStore] — never a constant in this file. The
+ * feature also defaults to *off*: background location is the most intrusive permission the
+ * app asks for, and grabbing it before the user has asked for the feature is both rude and
+ * the single most common reason Play rejects a location declaration.
  */
 object GeofenceManager {
 
-    private const val ID = "home"
+    const val ID = "home"
     private const val TAG = "Domofon"
-
-    const val HOME_LAT = 0.0
-    const val HOME_LON = 0.0
-
-    /** 2 km, well above docs/08's ~150 m reliability floor. Fires ~2 min out at 60 km/h. */
-    const val RADIUS_M = 2_000f
 
     fun hasPermissions(context: Context): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -37,8 +34,21 @@ object GeofenceManager {
             background == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Registers, or tears down, to match the current settings.
+     *
+     * Safe to call repeatedly — on boot, after a settings change, after a permission grant.
+     */
     @SuppressLint("MissingPermission") // guarded by hasPermissions()
-    fun register(context: Context) {
+    fun sync(context: Context) {
+        val home = ConfigStore.current.home
+        if (!home.isUsable) {
+            // Covers both "switched off" and "half-filled form": turning the feature off
+            // has to actually stop the tracking, not just stop reacting to it.
+            Log.i(TAG, "geofence not active: disabled or no home position set")
+            remove(context)
+            return
+        }
         if (!hasPermissions(context)) {
             // Without "Allow all the time" the geofence is accepted and then never fires —
             // docs/08 calls this the #1 geofence bug. Refuse loudly instead.
@@ -48,24 +58,32 @@ object GeofenceManager {
 
         val geofence = Geofence.Builder()
             .setRequestId(ID)
-            .setCircularRegion(HOME_LAT, HOME_LON, RADIUS_M)
+            .setCircularRegion(home.latitude!!, home.longitude!!, home.radiusMeters)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
             .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
             .setNotificationResponsiveness(30_000) // fresh enough at 2 km, battery-cheap
             .build()
 
         val request = GeofencingRequest.Builder()
-            // No INITIAL_TRIGGER_ENTER. docs/08 assumes a 300-500 m radius; at 2 km the
-            // house sits inside the fence, so an initial trigger would fire "approaching
-            // home" on every app start and every reboot while parked at home.
+            // No INITIAL_TRIGGER_ENTER. docs/08 assumes a 300-500 m radius; at the default
+            // 2 km the house sits inside the fence, so an initial trigger would fire
+            // "approaching home" on every app start and every reboot while parked at home.
             .setInitialTrigger(0)
             .addGeofence(geofence)
             .build()
 
         LocationServices.getGeofencingClient(context)
             .addGeofences(request, pendingIntent(context))
-            .addOnSuccessListener { Log.i(TAG, "geofence registered: ${RADIUS_M}m around home") }
+            // Radius only, never the coordinates — that is the user's home address, and
+            // logcat is readable by adb and by anything holding READ_LOGS.
+            .addOnSuccessListener { Log.i(TAG, "geofence registered (r=${home.radiusMeters}m)") }
             .addOnFailureListener { Log.e(TAG, "geofence registration failed", it) }
+    }
+
+    fun remove(context: Context) {
+        LocationServices.getGeofencingClient(context)
+            .removeGeofences(listOf(ID))
+            .addOnFailureListener { Log.w(TAG, "geofence removal failed", it) }
     }
 
     private fun pendingIntent(context: Context): PendingIntent =
@@ -73,7 +91,8 @@ object GeofenceManager {
             context,
             0,
             Intent(context, GeofenceReceiver::class.java),
-            // MUTABLE: Play Services fills the transition details into this intent.
+            // MUTABLE: Play Services fills the transition details into this intent. It
+            // names an explicit component, so only GMS can make use of it.
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
         )
 }

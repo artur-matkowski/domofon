@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Domofon" parent="Theme.AppCompat.DayNight.NoActionBar"/>
+
+    <!--
+      The settings screen needs the action bar (for the up arrow) that the QML host
+      deliberately does not have, and preferenceTheme, which AppCompat does not set on its
+      own — without it PreferenceFragmentCompat inflates nothing and the screen is blank.
+    -->
+    <style name="Theme.Domofon.Settings" parent="Theme.AppCompat.DayNight">
+        <item name="preferenceTheme">@style/PreferenceThemeOverlay</item>
+    </style>
 </resources>

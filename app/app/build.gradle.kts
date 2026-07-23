@@ -5,15 +5,15 @@ plugins {
     id("org.qtproject.qt.gradleplugin") version "1.4"
 }
 
-// Broker credentials live in local.properties (gitignored) — this repo is public, so they
-// must never reach git. They land in BuildConfig instead of a settings UI; ch. 04 moves
-// them into the real settings store alongside the RTSP URL.
-val localProps = Properties().apply {
-    val file = rootProject.file("local.properties")
+// Signing only. No application configuration is read at build time any more: broker
+// credentials, topics, home coordinates and the RTSP URL all live in the on-device
+// settings store, because a published APK is a public artifact and `strings` on it is not
+// a difficult attack.
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("keystore.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
-
-fun localProp(key: String, fallback: String): String = localProps.getProperty(key) ?: fallback
+val hasSigning = keystoreProps.getProperty("storeFile") != null
 
 android {
     namespace = "pl.bitforge.domofon"
@@ -32,19 +32,40 @@ android {
         versionName = "0.1"
 
         ndk { abiFilters += "arm64-v8a" }
-
-        buildConfigField("String", "MQTT_HOST", "\"${localProp("mqtt.host", "")}\"")
-        buildConfigField("int", "MQTT_PORT", localProp("mqtt.port", "1883"))
-        buildConfigField("String", "MQTT_USER", "\"${localProp("mqtt.user", "")}\"")
-        buildConfigField("String", "MQTT_PASS", "\"${localProp("mqtt.pass", "")}\"")
     }
 
     buildFeatures { buildConfig = true }
 
+    signingConfigs {
+        if (hasSigning) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 on, for the first time. This is a behavioural change as much as a size
+            // one: Qt and the shaded Netty inside the HiveMQ client both reach for classes
+            // reflectively, so proguard-rules.pro is load-bearing and the release build
+            // must be re-tested on device, not assumed to work because debug does.
+            isMinifyEnabled = true
+
+            // Resource shrinking stays OFF, and this is not caution — it is a known
+            // failure. QtLoader resolves its bootstrap data with Resources.getIdentifier(),
+            // i.e. by name, with no R-class reference for AAPT to follow: the arrays
+            // qt_libs / load_local_libs / bundled_libs and the strings use_local_qt_libs,
+            // bundle_local_qt_libs, system_libs_prefix, fatal_error_msg. The shrinker sees
+            // them unreferenced and strips them, and the app dies at launch with an
+            // UnsatisfiedLinkError. Keep rules do not help — only res/raw/keep.xml does.
+            // Turn this on together with that file, and only after re-testing on device.
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -52,13 +73,28 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    packaging {
+        resources {
+            // ~100 KB of x86_64 Linux epoll native code inside the HiveMQ shaded jar.
+            // Netty ships it for JVM servers; on Android it is unreachable dead weight.
+            excludes += "META-INF/native/**"
+        }
+    }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // 1.18.0, not 1.19.0: core 1.19.0 declares minCompileSdk=37 and would hard-fail
+    // against compileSdk 36.
+    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+
+    // The settings screen. Chosen over Compose because AGP 9's built-in Kotlin support and
+    // the Compose compiler plugin do not currently coexist comfortably in this project,
+    // and a preference screen is exactly what PreferenceFragmentCompat is for.
+    implementation("androidx.preference:preference-ktx:1.2.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Android Auto. app-projected is what makes the app show up on a projected head unit.
     implementation("androidx.car.app:app:1.7.0")
@@ -66,8 +102,14 @@ dependencies {
 
     // MQTT. The -shaded artifact relocates its Netty copy; the plain one collides with
     // whatever else drags Netty in. See docs/05.
-    implementation("com.hivemq:hivemq-mqtt-client-shaded:1.3.5")
+    //
+    // 1.3.17, not the 1.3.5 this project started on: 1.3.5 bundles Netty 4.1.118, which
+    // carries 24 open advisories. One of them matters directly now that the app can use
+    // TLS — CVE-2026-50010, where wrapping a plain TrustManager silently disables
+    // hostname verification, which is exactly the shape of a homelab broker with a
+    // self-signed certificate. The 1.3.x line is patch-only, so the API is unchanged.
+    implementation("com.hivemq:hivemq-mqtt-client-shaded:1.3.17")
 
     // Geofencing (ch. 08).
-    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-location:21.4.0")
 }

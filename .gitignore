@@ -1,6 +1,15 @@
 # Secrets and machine-local config — never commit
 local.properties
 .claude/settings.local.json
+bridge/bridge.env
+*.env
+!*.env.example
+
+# Release signing. keystore.properties holds the store and key passwords in plain text,
+# and the upload key itself cannot be re-issued casually — losing control of it means
+# losing the ability to update the app on Play.
+keystore.properties
+*.jks
 
 # Gradle / Android
 .gradle/

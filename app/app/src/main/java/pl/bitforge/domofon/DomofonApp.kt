@@ -3,11 +3,18 @@ package pl.bitforge.domofon
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import pl.bitforge.domofon.config.ConfigStore
 
 class DomofonApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Before anything else: every entry point — the activity, the car session, both
+        // receivers — reads ConfigStore.current synchronously, and Application.onCreate is
+        // the one place guaranteed to run before any of them.
+        ConfigStore.init(this)
+
         val nm = getSystemService(NotificationManager::class.java)
 
         // IMPORTANCE_HIGH is what makes a notification a heads-up one — on the phone and,

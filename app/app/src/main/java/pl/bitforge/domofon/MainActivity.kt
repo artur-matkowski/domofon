@@ -3,13 +3,10 @@ package pl.bitforge.domofon
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -20,6 +17,8 @@ import org.qtproject.qt.android.QtQmlStatus
 import org.qtproject.qt.android.QtQmlStatusChangeListener
 import org.qtproject.qt.android.QtQuickView
 import org.qtproject.qt.android.QtQuickViewContent
+import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
@@ -35,6 +34,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
     private val mainQml = Main()
     private var commandListenerId = 0
+    private var settingsListenerId = 0
 
     /** Setting a QML property before the view reports READY is a no-op at best. */
     @Volatile
@@ -44,6 +44,14 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         super.onCreate(savedInstanceState)
 
         val qtQuickView = QtQuickView(this)
+
+        // Tapjacking guard. minSdk is 28, and the platform only started blocking obscured
+        // touches itself in Android 12 — before that, an app holding SYSTEM_ALERT_WINDOW
+        // could launch this (exported) activity and float a decoy over the Open button,
+        // whose position is trivially predictable from the QML layout.
+        qtQuickView.filterTouchesWhenObscured = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) window.setHideOverlayWindows(true)
+
         setContentView(
             qtQuickView,
             ViewGroup.LayoutParams(
@@ -65,12 +73,22 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             .launchIn(lifecycleScope)
 
         GateNotifier.observe(this, lifecycleScope)
-        requestPermissions()
+
+        // First run goes straight to setup. There is nothing the main screen can usefully
+        // show before a broker exists, and an app that opens on a dead screen reads as
+        // broken rather than as unconfigured.
+        if (savedInstanceState == null && !ConfigStore.current.isComplete) {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
     }
 
     override fun onStart() {
         super.onStart()
         GateRepository.connect()
+        // Settings may have changed while we were away — including the home position or
+        // the geofence toggle.
+        GeofenceManager.sync(this)
+        maybeRequestNotifications()
     }
 
     override fun onStop() {
@@ -93,77 +111,40 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             Log.i(TAG, "QML asked: $action")
             GateRepository.sendCommand(action)
         }
+
+        // The theme is NoActionBar so the QML fills the screen; the way back into setup is
+        // a control inside the QML itself rather than an options menu that cannot render.
+        settingsListenerId = mainQml.connectSettingsRequestedListener { _, _ ->
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
     }
 
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
     /**
-     * Step one: notifications and foreground location, in one ordinary dialog.
+     * Notifications only. Location is *not* requested here.
      *
-     * Background location must not be in this batch. Android denies a combined request
-     * outright, which is the single most common way geofencing silently never works.
+     * The geofence is an opt-in feature now, so asking for location on first launch would
+     * be asking for a permission the user has not asked for a feature for — which is both
+     * rude and, per Play's location policy, a documented rejection reason. It is requested
+     * from [requestLocationForGeofence], reached only by switching the feature on.
      */
-    private fun requestPermissions() {
-        val needed = buildList {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                !granted(Manifest.permission.POST_NOTIFICATIONS)
-            ) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
-                add(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-        }
-        if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), REQ_FOREGROUND)
-        else requestBackgroundLocation()
-    }
-
-    /** Step two, only once foreground location is already granted. */
-    private fun requestBackgroundLocation() {
-        if (granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
-            GeofenceManager.register(this)
-            return
-        }
-        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
-            Log.w(TAG, "foreground location denied — geofence disabled")
-            return
-        }
-        requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQ_BACKGROUND)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            REQ_FOREGROUND -> requestBackgroundLocation()
-            REQ_BACKGROUND ->
-                if (granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
-                    GeofenceManager.register(this)
-                } else {
-                    // Android 11+ refuses to grant "Allow all the time" from a dialog at all;
-                    // Settings is the only place it can be turned on.
-                    Toast.makeText(
-                        this,
-                        "Set Location to \"Allow all the time\" — the gate pop-up needs it",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.fromParts("package", packageName, null),
-                        )
-                    )
-                }
-        }
+    private fun maybeRequestNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (granted(Manifest.permission.POST_NOTIFICATIONS)) return
+        // Once per install: a third-party app can bounce this activity in a loop, and a
+        // permission dialog on every onStart would be a nuisance vector.
+        if (askedForNotifications) return
+        askedForNotifications = true
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
     }
 
     private companion object {
         const val TAG = "Domofon"
-        const val REQ_FOREGROUND = 1
-        const val REQ_BACKGROUND = 2
+        const val REQ_NOTIFICATIONS = 3
+
+        /** Process-scoped: enough to stop a start-activity loop nagging the user. */
+        var askedForNotifications = false
     }
 }

@@ -14,10 +14,27 @@ Rectangle {
     // QML -> Kotlin. Button presses flow out to GateRepository.sendCommand().
     signal commandRequested(string action)
 
+    // QML -> Kotlin. Opens SettingsActivity. The activity theme has no action bar, so this
+    // is the only way back into setup once the first run is over.
+    signal settingsRequested()
+
     // Everything sizes off the short edge rather than Qt's default control metrics, which
     // render thumbnail-sized on a 1080p phone. One knob, so the layout follows the screen
     // (and the tablet, and the landscape rotation) instead of being pinned to pixels.
     readonly property real unit: Math.min(width, height) / 100
+
+    Button {
+        id: settingsButton
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: root.unit * 2
+        width: root.unit * 12
+        height: root.unit * 12
+        text: "⚙"                  // gear
+        font.pixelSize: root.unit * 6
+        flat: true
+        onClicked: root.settingsRequested()
+    }
 
     Column {
         anchors.centerIn: parent

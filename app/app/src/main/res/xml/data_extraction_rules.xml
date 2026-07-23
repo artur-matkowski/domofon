@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  android:allowBackup="false" covers cloud backup, but on Android 12+ device-to-device
+  transfer is governed separately and is *not* disabled by it. The app now persists
+  broker credentials, an RTSP password and the user's home coordinates, so neither
+  channel may carry its data off the device.
+
+  The Keystore key that encrypts the secrets is non-exportable in any case, so a
+  transferred copy would be undecryptable — but the home coordinates are plaintext, and
+  "the ciphertext leaked but the key didn't" is not a story worth having.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="file" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="file" path="."/>
+    </device-transfer>
+</data-extraction-rules>

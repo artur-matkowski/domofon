@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every value the app used to hardcode. The android:key strings must stay in lockstep with
+  the K_* constants in ConfigStore — they are the same keys, and nothing checks that at
+  compile time.
+
+  No android:defaultValue on the broker host, the coordinates or any credential: a default
+  that points somewhere real is exactly what this refactor exists to remove. Structural
+  defaults (topic prefixes, ports) are fine and live in DomofonConfig.Defaults.
+-->
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="@string/pref_cat_broker">
+
+        <EditTextPreference
+            app:key="broker.host"
+            app:title="@string/pref_host"
+            app:summary="@string/pref_host_summary"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="broker.port"
+            app:title="@string/pref_port"
+            app:useSimpleSummaryProvider="true"/>
+
+        <SwitchPreferenceCompat
+            app:key="broker.tls"
+            app:title="@string/pref_tls"
+            app:summaryOn="@string/pref_tls_on"
+            app:summaryOff="@string/pref_tls_off"/>
+
+        <EditTextPreference
+            app:key="broker.username"
+            app:title="@string/pref_username"
+            app:useSimpleSummaryProvider="true"/>
+
+        <!-- Summary is supplied in code; it must never render the password itself. -->
+        <EditTextPreference
+            app:key="broker.password"
+            app:title="@string/pref_password"/>
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:title="@string/pref_cat_topics"
+        app:summary="@string/pref_cat_topics_summary"
+        app:initialExpandedChildrenCount="0">
+
+        <EditTextPreference
+            app:key="topics.rxPrefix"
+            app:title="@string/pref_rx_prefix"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="topics.txPrefix"
+            app:title="@string/pref_tx_prefix"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="topics.availability"
+            app:title="@string/pref_availability"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="topics.nodeId"
+            app:title="@string/pref_node_id"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="topics.payloadKey"
+            app:title="@string/pref_payload_key"
+            app:useSimpleSummaryProvider="true"/>
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/pref_cat_home">
+
+        <SwitchPreferenceCompat
+            app:key="home.enabled"
+            app:title="@string/pref_geofence"
+            app:summary="@string/pref_geofence_summary"/>
+
+        <EditTextPreference
+            app:key="home.latitude"
+            app:title="@string/pref_latitude"
+            app:dependency="home.enabled"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="home.longitude"
+            app:title="@string/pref_longitude"
+            app:dependency="home.enabled"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="home.radiusMeters"
+            app:title="@string/pref_radius"
+            app:summary="@string/pref_radius_summary"
+            app:dependency="home.enabled"/>
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/pref_cat_camera">
+
+        <EditTextPreference
+            app:key="camera.rtspUrl"
+            app:title="@string/pref_rtsp_url"
+            app:summary="@string/pref_rtsp_url_summary"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="camera.rtspUsername"
+            app:title="@string/pref_rtsp_user"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
+            app:key="camera.rtspPassword"
+            app:title="@string/pref_rtsp_password"/>
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/pref_cat_security">
+
+        <SwitchPreferenceCompat
+            app:key="security.requireUnlock"
+            app:title="@string/pref_require_unlock"
+            app:summary="@string/pref_require_unlock_summary"
+            app:defaultValue="true"/>
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

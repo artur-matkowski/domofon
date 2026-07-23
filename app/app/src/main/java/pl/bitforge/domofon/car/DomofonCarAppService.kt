@@ -1,12 +1,13 @@
 package pl.bitforge.domofon.car
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import androidx.car.app.CarAppService
 import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
@@ -14,23 +15,46 @@ import pl.bitforge.domofon.gate.GateRepository
 class DomofonCarAppService : CarAppService() {
 
     /**
-     * A personal, sideloaded app: both the Desktop Head Unit and a real car are "unknown"
-     * hosts, and the default validator rejects them — the car app would open and instantly
-     * close. Never ship this to Play with ALLOW_ALL.
+     * The only access control on this service. It is exported — it has to be, the car host
+     * binds it — and it carries no `android:permission`, so whatever this returns is the
+     * whole security boundary.
+     *
+     * `ALLOW_ALL_HOSTS_VALIDATOR` therefore meant: any installed app, holding no
+     * permissions at all, could bind here, complete the handshake, call `onAppCreate` to
+     * force an authenticated MQTT connection to the user's broker, fetch the template, and
+     * invoke the grid item's `OnClickDelegate` over the binder — **opening the gate**, with
+     * nothing drawn on screen and nothing in the notification shade. It is kept for debug
+     * builds only, because the Desktop Head Unit is an unknown host and the car app would
+     * otherwise open and instantly close during development.
      */
-    override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+    override fun createHostValidator(): HostValidator =
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+        } else {
+            // hosts_allowlist_sample is the library's own list of the Android Auto and
+            // Automotive host package/signature pairs. "Sample" is a misnomer inherited
+            // from Google's example app; it is the real allowlist and the documented way
+            // to build a production validator.
+            HostValidator.Builder(applicationContext)
+                .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
+                .build()
+        }
 
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent): Screen {
+            // Observer first, then connect. Registering afterwards leaks an owner slot for
+            // good if the host tears the session down in between — after which the count
+            // never returns to zero and the connection is never rebuilt.
+            lifecycle.addObserver(
+                object : DefaultLifecycleObserver {
+                    override fun onDestroy(owner: LifecycleOwner) = GateRepository.disconnect()
+                }
+            )
+
             // An active Android Auto session is one of the three MQTT owners (ch. 06).
             GateRepository.connect()
             GateNotifier.observe(carContext, lifecycleScope)
 
-            lifecycle.addObserver(
-                LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_DESTROY) GateRepository.disconnect()
-                }
-            )
             return GateScreen(carContext)
         }
     }

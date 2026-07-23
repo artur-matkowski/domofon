@@ -1,4 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Domofon</string>
+    <string name="settings_title">Settings</string>
+    <string name="action_settings">Settings</string>
+
+    <!-- Broker -->
+    <string name="pref_cat_broker">MQTT broker</string>
+    <string name="pref_host">Host</string>
+    <string name="pref_host_summary">Address of your MQTT broker. Required.</string>
+    <string name="pref_port">Port</string>
+    <string name="pref_tls">Use TLS</string>
+    <string name="pref_tls_on">Encrypted (typically port 8883)</string>
+    <string name="pref_tls_off">Unencrypted — your password crosses the network in the clear. Only safe on a trusted network or inside a VPN.</string>
+    <string name="pref_username">Username</string>
+    <string name="pref_password">Password</string>
+    <string name="pref_password_set">Stored (encrypted on this device)</string>
+    <string name="pref_password_unset">Not set</string>
+
+    <!-- Topics -->
+    <string name="pref_cat_topics">Topics</string>
+    <string name="pref_cat_topics_summary">Only change these if your gate bridge uses a different topic scheme.</string>
+    <string name="pref_rx_prefix">State topic prefix</string>
+    <string name="pref_tx_prefix">Command topic prefix</string>
+    <string name="pref_availability">Availability topic</string>
+    <string name="pref_node_id">Gate node id</string>
+    <string name="pref_payload_key">Command payload key</string>
+
+    <!-- Home / geofence -->
+    <string name="pref_cat_home">Home location</string>
+    <string name="pref_geofence">Notify when approaching home</string>
+    <string name="pref_geofence_summary">Uses your location in the background to show the gate when you arrive. Off by default.</string>
+    <string name="pref_latitude">Latitude</string>
+    <string name="pref_longitude">Longitude</string>
+    <string name="pref_radius">Radius (metres)</string>
+    <string name="pref_radius_summary">How far from home the notification appears. Below about 150 m it becomes unreliable.</string>
+
+    <!-- Camera -->
+    <string name="pref_cat_camera">Camera</string>
+    <string name="pref_rtsp_url">RTSP URL</string>
+    <string name="pref_rtsp_url_summary">Stream from your gate camera.</string>
+    <string name="pref_rtsp_user">RTSP username</string>
+    <string name="pref_rtsp_password">RTSP password</string>
+
+    <!-- Security -->
+    <string name="pref_cat_security">Security</string>
+    <string name="pref_require_unlock">Require unlock to open the gate</string>
+    <string name="pref_require_unlock_summary">Notification buttons will not move the gate while the screen is locked. Strongly recommended.</string>
+
+    <!-- Runtime messages -->
+    <string name="not_configured_title">Not set up yet</string>
+    <string name="not_configured_car">Open Domofon on your phone to set up your gate.</string>
+    <string name="unlock_to_open">Unlock your phone to open the gate</string>
+    <string name="location_rationale_title">Notify me when I get home</string>
+    <string name="location_rationale">Domofon can show your gate automatically as you approach home. To do that, Android needs location access allowed <b>all the time</b>, because the check happens while the app is closed.\n\nYour location is used only on this device to measure the distance to the home position you entered. It is never sent anywhere, and it is never shared.\n\nThe rest of the app works without this.</string>
+    <string name="location_rationale_continue">Continue</string>
+    <string name="location_rationale_cancel">Not now</string>
+    <string name="location_needs_all_the_time">Choose “Allow all the time” so the gate can pop up as you arrive</string>
 </resources>
