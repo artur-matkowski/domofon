@@ -46,7 +46,26 @@ Update this as you go — it is how future guidance sessions know where you are.
 - [ ] **M2** — Kotlin app shows embedded QML view on the phone (ch. 03)
       <br>*`app/` scaffolded and compiling; property/signal round-trip unverified on device.*
 - [ ] **M3** — RTSP video + audio playing in the app over VPN (ch. 04)
+      <br>*2026-07-23: interim **phone-side snapshot** added — the phone QML view now shows
+      the same RTSP still as the head unit, reusing `CameraFrameGrabber` (a Bitmap can't
+      cross the QtQuickView bridge, so frames pass as a cache `file://` URL). Not full M3
+      video/audio; that remains to write. New `camera.snapshotSecs` setting makes the
+      snapshot interval configurable (was a hardcoded 10 s) for both the phone and the car.
+      **2026-07-23, tested on device: the RTSP snapshot is switched OFF.** Reading
+      `Image.getPlanes()` on ExoPlayer's decoder output is a native JNI abort on Exynos
+      (Samsung SM-G990B2) — it killed the app ~3 s after every launch. See ch. 10; the
+      replacement is an HTTP JPEG snapshot, and `CameraFrameGrabber.ENABLED` re-enables
+      everything downstream in one line once frames come from somewhere safe.*
 - [ ] **M4** — Gate control + live state working in the phone UI (ch. 05)
+      <br>*2026-07-23: MQTT connectivity is now **verified on a real device against the real
+      broker**, in an R8 release build. `GateRepository` exposes a real `ConnectionState`
+      and every surface renders it, so "connected but the broker has no retained state" no
+      longer looks identical to "cannot reach the broker" — which is what a whole debugging
+      session went into. Two live bugs fixed alongside: HiveMQ's `automaticReconnect` could
+      never re-authenticate after a network flap (the app was permanently mute until
+      force-stopped), and the settings screen crashed on open. Gate **state** is still
+      unconfirmed: the broker holds no retained `hc12/rx/Gate*`, so nothing has exercised
+      the state path end-to-end yet.*
 - [ ] **M5** — Notification arrives on state change with the app backgrounded (ch. 06)
 - [ ] **M6** — Gate control on the car screen + heads-up notification, tested in DHU (ch. 07)
       <br>*Works in the DHU. The **real-car** smoke test is gated: *Unknown sources* doesn't

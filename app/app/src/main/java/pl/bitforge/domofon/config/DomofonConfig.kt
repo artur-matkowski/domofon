@@ -107,11 +107,17 @@ data class DomofonConfig(
     data class Camera(
         /** Carries the camera credentials inline: rtsp://user:pass@host/… */
         val rtspUrl: String,
+        /**
+         * Seconds between snapshots the [pl.bitforge.domofon.camera.CameraFrameGrabber]
+         * emits. Governs both the phone view's refresh and the car screen's redraw cadence.
+         * Clamped in [ConfigStore.read].
+         */
+        val snapshotSecs: Int,
     ) {
         val isConfigured: Boolean get() = rtspUrl.isNotBlank()
 
         /** Same reasoning as [Broker.toString] — the URL embeds the credentials. */
-        override fun toString(): String = "Camera(configured=$isConfigured)"
+        override fun toString(): String = "Camera(configured=$isConfigured, snapshotSecs=$snapshotSecs)"
     }
 
     companion object {
@@ -139,7 +145,7 @@ data class DomofonConfig(
                 keepAliveSeconds = Defaults.KEEP_ALIVE_S,
             ),
             home = Home(enabled = false, latitude = null, longitude = null, radiusMeters = Defaults.RADIUS_M),
-            camera = Camera(rtspUrl = ""),
+            camera = Camera(rtspUrl = "", snapshotSecs = Defaults.SNAPSHOT_SECS),
             requireUnlockForCommands = true,
         )
     }
@@ -160,6 +166,9 @@ data class DomofonConfig(
         /** At-least-once — what every topic used before QoS became configurable. */
         const val QOS = 1
         const val KEEP_ALIVE_S = 60
+
+        /** Snapshot cadence in seconds — the old hardcoded 10 s, now the default. */
+        const val SNAPSHOT_SECS = 10
 
         /** 2 km — well above docs/08's ~150 m reliability floor; fires ~2 min out at 60 km/h. */
         const val RADIUS_M = 2_000f

@@ -21,6 +21,7 @@ import pl.bitforge.domofon.R
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.gate.BridgeStatus
+import pl.bitforge.domofon.gate.ConnectionStatus
 import pl.bitforge.domofon.gate.GateRepository
 
 /**
@@ -54,7 +55,13 @@ class GateScreen(
         // on the phone while the car session is already open — and on a new camera frame,
         // which arrives at most once per grabber snapshot interval, so the invalidate rate
         // stays well inside host etiquette.
-        listOf(GateRepository.gateState, GateRepository.bridgeStatus, ConfigStore.config, grabber.frame)
+        listOf(
+            GateRepository.gateState,
+            GateRepository.bridgeStatus,
+            GateRepository.connection,
+            ConfigStore.config,
+            grabber.frame,
+        )
             .merge()
             .onEach { invalidate() }
             .launchIn(lifecycleScope)
@@ -71,18 +78,34 @@ class GateScreen(
         val state = GateRepository.gateState.value.state
         val primary = GateRepository.primaryAction(state)
 
-        // OFFLINE is the bridge's own LWT — a fact worth alarming about. UNKNOWN is the
-        // normal opening state of a fresh (VPN) connection and must not read as an outage;
-        // once retained state or a live message arrives, the title carries real content.
-        val title = when (GateRepository.bridgeStatus.value) {
-            BridgeStatus.OFFLINE -> "Gate — unreachable"
-            BridgeStatus.UNKNOWN ->
+        // Our own connection is asked about first: "connecting…" was previously shown for a
+        // hard failure too, so a rejected password looked like a slow VPN for the length of
+        // the drive. A real failure now names itself on the head unit.
+        val connection = GateRepository.connection.value
+        val title = when (connection.status) {
+            ConnectionStatus.FAILED -> "Gate — ${connection.reason}"
+            ConnectionStatus.CONNECTING, ConnectionStatus.DISCONNECTED ->
                 if (state == GateRepository.STATE_UNKNOWN) "Gate — connecting…" else "Gate — $state"
-            BridgeStatus.ONLINE -> "Gate — $state"
+            // OFFLINE is the bridge's own LWT — a fact worth alarming about. UNKNOWN is the
+            // normal opening state of a fresh (VPN) connection and must not read as an
+            // outage; once retained state or a live message arrives, the title carries real
+            // content.
+            ConnectionStatus.CONNECTED, ConnectionStatus.DEGRADED ->
+                when (GateRepository.bridgeStatus.value) {
+                    BridgeStatus.OFFLINE -> "Gate — unreachable"
+                    BridgeStatus.UNKNOWN, BridgeStatus.ONLINE ->
+                        if (state == GateRepository.STATE_UNKNOWN) "Gate — no state reported"
+                        else "Gate — $state"
+                }
         }
 
-        return if (ConfigStore.current.camera.isConfigured) cameraTemplate(title, primary.label, primary.action)
-        else gridTemplate(title, primary.label, primary.action)
+        // Same gate as the phone panel: with the grabber off there is no frame coming, and
+        // the camera template would be a permanent empty placeholder on the head unit.
+        return if (ConfigStore.current.camera.isConfigured && CameraFrameGrabber.ENABLED) {
+            cameraTemplate(title, primary.label, primary.action)
+        } else {
+            gridTemplate(title, primary.label, primary.action)
+        }
     }
 
     /** The original camera-less layout: one grid cell that is the gate button. */

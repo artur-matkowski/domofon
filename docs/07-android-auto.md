@@ -176,12 +176,16 @@ Debian does not install by default. Rather than `sudo apt install libc++1 libc++
 the script borrows the host copies the Android NDK already ships under
 `ndk/*/toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu/`.
 
-By default it also passes `-c scripts/passat-b8.ini`, which drives the DHU at the real
-target's geometry: the Passat B8's 9.2" Discover Pro is **1280×640**, and the DHU's
-plain default is 800×480 — a layout that looks right there can clip on the car. The DHU
-only accepts 800×480 / 1280×720 / 1920×1080, so the profile renders 1280×720 and
-letterboxes 80px of height off to land on 1280×640. Pass your own `-c yours.ini` (or any
-of the bundled `extras/google/auto/config/*.ini`) and the script steps out of the way.
+By default it also passes `-c scripts/passat-b8.ini`. That profile drives the DHU at a
+**5:3** aspect (1280×720 base cropped to **1200×720** with `marginwidth = 80`) at native
+`dpi = 160`, deliberately *not* the panel's physical 1280×640.
+The reason is the aspect ratio: at the native 2:1 the DHU renders Android Auto's Coolwalk
+two-pane widescreen layout (a left app rail with the media + map dashboard side by side)
+that the real car never shows, and forcing dpi does not suppress it — the tiling keys off
+the wide aspect, so a narrower canvas is what keeps it single-pane (see ch. 10, *Desktop
+Head Unit*). Set your car's real projected resolution in the profile if you know it.
+Pass your own `-c yours.ini` (or any of the bundled `extras/google/auto/config/*.ini`) and
+the script steps out of the way.
 
 Two rules, both of which cost an afternoon to learn (ch. 10):
 

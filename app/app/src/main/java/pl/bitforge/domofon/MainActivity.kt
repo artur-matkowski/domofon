@@ -3,6 +3,7 @@ package pl.bitforge.domofon
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -21,11 +22,13 @@ import org.qtproject.qt.android.QtQmlStatus
 import org.qtproject.qt.android.QtQmlStatusChangeListener
 import org.qtproject.qt.android.QtQuickView
 import org.qtproject.qt.android.QtQuickViewContent
+import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
+import java.io.File
 
 /**
  * Hosts the QML UI inside a normal Kotlin activity via [QtQuickView].
@@ -39,6 +42,16 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private val mainQml = Main()
     private var commandListenerId = 0
     private var settingsListenerId = 0
+
+    /**
+     * Pulls camera stills over RTSP. applicationContext, not `this`: it is held for the
+     * activity's whole life and outlives configuration changes, so an activity context here
+     * would leak. Started/stopped with the activity, like the MQTT connection.
+     */
+    private val cameraGrabber by lazy { CameraFrameGrabber(applicationContext) }
+
+    /** Bumped per frame so the QML Image URL changes and the view actually reloads. */
+    private var frameVersion = 0
 
     /** Setting a QML property before the view reports READY is a no-op at best. */
     @Volatile
@@ -108,6 +121,34 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             .onEach { if (qmlReady) mainQml.bridgeStatus = it.name.lowercase() }
             .launchIn(lifecycleScope)
 
+        // Our own connection, which until now the phone UI had no way to mention: a broker
+        // that rejected the password and a broker with nothing retained on it both rendered
+        // as "Gate: unknown" and no error at all.
+        GateRepository.connection
+            .onEach {
+                if (qmlReady) {
+                    mainQml.connectionStatus = it.status.name.lowercase()
+                    mainQml.connectionReason = it.reason
+                }
+            }
+            .launchIn(lifecycleScope)
+
+        // A new still: persist it and hand QML a fresh URL. A Bitmap cannot cross the
+        // QtQuickView property bridge, so the frame travels as a file the Image loads.
+        cameraGrabber.frame
+            .onEach { bitmap -> if (qmlReady && bitmap != null) mainQml.cameraFrame = writeFrame(bitmap) }
+            .launchIn(lifecycleScope)
+
+        cameraGrabber.status
+            .onEach { if (qmlReady) mainQml.cameraStatus = it.name.lowercase() }
+            .launchIn(lifecycleScope)
+
+        // Whether a camera URL is set at all decides if the QML panel appears. Driven off
+        // config so toggling the URL in Settings shows/hides it without a relaunch.
+        ConfigStore.config
+            .onEach { if (qmlReady) mainQml.cameraConfigured = cameraPanelVisible(it.camera.isConfigured) }
+            .launchIn(lifecycleScope)
+
         GateNotifier.observe(this, lifecycleScope)
 
         // First run goes straight to setup — but only from onStatusChanged, once the QML
@@ -121,6 +162,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     override fun onStart() {
         super.onStart()
         GateRepository.connect()
+        cameraGrabber.start()
         // Settings may have changed while we were away — including the home position or
         // the geofence toggle.
         GeofenceManager.sync(this)
@@ -129,6 +171,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
     override fun onStop() {
         GateRepository.disconnect()
+        cameraGrabber.stop()
         super.onStop()
     }
 
@@ -140,6 +183,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // Seed the view with the state we already have.
         mainQml.gateState = GateRepository.gateState.value.state
         mainQml.bridgeStatus = GateRepository.bridgeStatus.value.name.lowercase()
+        mainQml.connectionStatus = GateRepository.connection.value.status.name.lowercase()
+        mainQml.connectionReason = GateRepository.connection.value.reason
+        mainQml.cameraConfigured = cameraPanelVisible(ConfigStore.current.camera.isConfigured)
+        mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
+        cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }
 
         // QML -> Kotlin: the generated connect<Signal>Listener returns an id you can use
         // to disconnect later. The first lambda argument is the signal name.
@@ -162,6 +210,27 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
     }
+
+    /**
+     * Writes the latest frame to a private cache file and returns a `file://` URL for QML.
+     * The `?v=` query changes every call so the URL differs each time — setting an
+     * identical string on a QML property emits no change, and QtQuick caches Image sources
+     * by URL, so without it a new frame would never repaint. The bitmap is already ≤640 px
+     * (downscaled in the grabber), so the JPEG is a few KB.
+     */
+    private fun writeFrame(bitmap: Bitmap): String {
+        val file = File(cacheDir, "camera-frame.jpg")
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        return "file://${file.absolutePath}?v=${++frameVersion}"
+    }
+
+    /**
+     * A configured RTSP URL is not enough to show the panel while the grabber is switched
+     * off — it would sit on "Connecting…" forever, waiting for a frame nothing will send.
+     * With this false the QML Column collapses the panel and the layout is exactly what it
+     * was before the camera existed. See [CameraFrameGrabber.ENABLED].
+     */
+    private fun cameraPanelVisible(configured: Boolean) = configured && CameraFrameGrabber.ENABLED
 
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED

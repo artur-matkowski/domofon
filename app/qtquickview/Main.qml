@@ -14,6 +14,21 @@ Rectangle {
     property string gateState: "unknown"
     property string bridgeStatus: "unknown"
 
+    // Kotlin -> QML. The camera snapshot. cameraFrame is a file:// URL to the latest still
+    // (a Bitmap can't cross the QtQuickView bridge), refreshed with a changing ?v= query.
+    // cameraStatus mirrors CameraFrameGrabber.Status; cameraConfigured gates the whole panel
+    // so a build with no RTSP URL shows just the gate controls, exactly as before.
+    property string cameraFrame: ""
+    property string cameraStatus: "idle"
+    property bool cameraConfigured: false
+
+    // Kotlin -> QML. Our own broker connection, mirroring GateRepository.ConnectionStatus:
+    // disconnected | connecting | connected | degraded | failed. connectionReason carries a
+    // user-facing explanation on failed/degraded and is empty otherwise. Separate from
+    // bridgeStatus, which is about the gate service rather than about our socket.
+    property string connectionStatus: "disconnected"
+    property string connectionReason: ""
+
     // QML -> Kotlin. Button presses flow out to GateRepository.sendCommand().
     signal commandRequested(string action)
 
@@ -44,6 +59,35 @@ Rectangle {
         width: parent.width * 0.88
         spacing: root.unit * 4
 
+        // Camera snapshot. An invisible item is skipped by Column layout, so with no
+        // camera configured the controls below center exactly as they did before this panel
+        // existed. 16:9 box; the still is letterboxed inside it (PreserveAspectFit).
+        Rectangle {
+            width: parent.width
+            height: root.cameraConfigured ? width * 9 / 16 : 0
+            visible: root.cameraConfigured
+            color: "#11111a"
+            radius: root.unit
+            clip: true
+
+            Image {
+                anchors.fill: parent
+                source: root.cameraFrame
+                cache: false            // the URL is reused; the ?v= query is what differs
+                asynchronous: true
+                fillMode: Image.PreserveAspectFit
+                visible: root.cameraFrame !== ""
+            }
+
+            Text {
+                anchors.centerIn: parent
+                visible: root.cameraFrame === ""
+                text: root.cameraStatus === "error" ? "Camera unreachable" : "Connecting…"
+                color: "#a6adc8"
+                font.pixelSize: root.unit * 4
+            }
+        }
+
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
@@ -54,16 +98,52 @@ Rectangle {
             elide: Text.ElideRight
         }
 
+        // One status line for two independent questions, in priority order: can we reach
+        // the broker at all, and if so what does the broker say about the gate service?
+        //
+        // Before this existed the answer to the first question was never rendered anywhere.
+        // A rejected password, a broker holding no retained state and a healthy connection
+        // were the same screen — "Gate: unknown", silence — which is what sent a working
+        // connection to the troubleshooting docs.
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+
+            readonly property bool connected: root.connectionStatus === "connected"
+                                              || root.connectionStatus === "degraded"
+
             // hc12/available said offline: the state above is the last thing we heard, not
             // necessarily the truth. Saying so beats showing a stale label as fact.
             // "unknown" deliberately shows nothing — before the tri-state, a fresh VPN
             // session wore this banner permanently just because no birth message arrived.
-            visible: root.bridgeStatus === "offline"
-            text: "Gate system unreachable"
-            color: "#f38ba8"
+            readonly property bool bridgeDown: connected && root.bridgeStatus === "offline"
+
+            // Muted grey for "this is fine, just letting you know"; red only for something
+            // the user may need to act on.
+            readonly property bool informational: root.connectionStatus === "connecting"
+                                                  || (connected && !bridgeDown
+                                                      && root.connectionStatus !== "degraded")
+
+            visible: text !== ""
+            text: {
+                if (root.connectionStatus === "connecting")
+                    return "Connecting to the broker…"
+                if (root.connectionStatus === "failed")
+                    return root.connectionReason !== "" ? root.connectionReason
+                                                        : "Cannot reach the broker"
+                if (bridgeDown)
+                    return "Gate system unreachable"
+                if (root.connectionStatus === "degraded")
+                    return root.connectionReason
+                if (connected && root.gateState === "unknown")
+                    // Connected, subscribed, and the broker simply has no gate state to
+                    // give us. Saying so is the entire difference between "it works, the
+                    // gate has not moved since the broker last restarted" and "it's broken".
+                    return "Connected — no gate state reported yet"
+                return ""
+            }
+            color: informational ? "#a6adc8" : "#f38ba8"
             font.pixelSize: root.unit * 4
             bottomPadding: root.unit * 2
         }

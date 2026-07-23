@@ -6,6 +6,10 @@
 
     <!-- Broker -->
     <string name="pref_cat_broker">MQTT broker</string>
+    <string name="pref_connection_status">Connection</string>
+    <string name="status_connected">Connected to the broker</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_disconnected">Not connected</string>
     <string name="pref_host">Host</string>
     <string name="pref_host_summary">Address of your MQTT broker. Required.</string>
     <string name="pref_port">Port</string>
@@ -48,6 +52,8 @@
     <string name="pref_cat_camera">Camera</string>
     <string name="pref_rtsp_url">RTSP URL</string>
     <string name="pref_rtsp_url_summary">Stream from your gate camera, e.g. rtsp://user:password@camera-address/path</string>
+    <string name="pref_snapshot_secs">Snapshot interval (seconds)</string>
+    <string name="pref_snapshot_secs_summary">How often a fresh still is pulled from the camera, on the phone and the car screen. Default 10. Lower is more current at a higher data cost over the VPN.</string>
 
     <!-- Security -->
     <string name="pref_cat_security">Security</string>

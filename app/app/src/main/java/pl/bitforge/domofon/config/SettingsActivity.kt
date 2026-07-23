@@ -14,11 +14,19 @@ import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreferenceCompat
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
+import pl.bitforge.domofon.gate.ConnectionState
+import pl.bitforge.domofon.gate.ConnectionStatus
+import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
 
 /**
@@ -65,8 +73,20 @@ class SettingsActivity : AppCompatActivity() {
         return true
     }
 
+    /**
+     * The settings screen holds the broker connection open while it is on screen, so the
+     * status row can report what the credentials being typed actually do. This is what the
+     * owner count in [GateRepository] is for — MainActivity has already let go by the time
+     * we get here, and taking a slot of our own costs nothing when it has not.
+     */
+    override fun onStart() {
+        super.onStart()
+        GateRepository.connect()
+    }
+
     /** Settings changes are only worth anything once they reach Play Services. */
     override fun onStop() {
+        GateRepository.disconnect()
         GeofenceManager.sync(this)
         super.onStop()
     }
@@ -152,9 +172,12 @@ class SettingsActivity : AppCompatActivity() {
             preferenceManager.preferenceDataStore = ConfigStore
             setPreferencesFromResource(R.xml.preferences, rootKey)
 
+            plainText(ConfigStore.K_HOST)
+            plainText(ConfigStore.K_USER)
             numeric(ConfigStore.K_PORT)
             numeric(ConfigStore.K_NODE_ID)
             numeric(ConfigStore.K_KEEP_ALIVE)
+            numeric(ConfigStore.K_SNAPSHOT_SECS)
             signedDecimal(ConfigStore.K_LAT)
             signedDecimal(ConfigStore.K_LON)
             numeric(ConfigStore.K_RADIUS)
@@ -172,10 +195,68 @@ class SettingsActivity : AppCompatActivity() {
                 }
         }
 
+        /**
+         * Not [onCreatePreferences]: that runs from `onCreate`, before there is a view, and
+         * `viewLifecycleOwner` throws there — which crashed the whole screen on open.
+         */
+        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+            super.onViewCreated(view, savedInstanceState)
+            connectionStatusRow()
+        }
+
+        /**
+         * The live readout at the top of the broker category — the reason this screen holds
+         * the connection open at all.
+         *
+         * Two collectors, because they answer different questions. The connection flow says
+         * what the broker did with these credentials; [ConfigStore.config] says the user
+         * just changed them, which is the cue to throw the old connection away and try the
+         * new ones. Both are scoped to `viewLifecycleOwner`, so they stop with the view.
+         */
+        private fun connectionStatusRow() {
+            val row = findPreference<Preference>(KEY_STATUS) ?: return
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    launch {
+                        GateRepository.connection.collect { row.summary = describe(it) }
+                    }
+                    launch {
+                        // drop(1): the current value is what we already connected with.
+                        ConfigStore.config.drop(1).collect { GateRepository.refresh() }
+                    }
+                }
+            }
+        }
+
+        private fun describe(state: ConnectionState): String = when (state.status) {
+            ConnectionStatus.CONNECTED -> getString(R.string.status_connected)
+            ConnectionStatus.CONNECTING -> getString(R.string.status_connecting)
+            ConnectionStatus.DISCONNECTED -> getString(R.string.status_disconnected)
+            // The reason is the whole point of these two; it is already user-facing prose
+            // and already free of the host and credentials.
+            ConnectionStatus.DEGRADED, ConnectionStatus.FAILED -> state.reason
+        }
+
         private fun edit(key: String): EditTextPreference? = findPreference(key)
 
         private fun numeric(key: String) = edit(key)?.setOnBindEditTextListener {
             it.inputType = InputType.TYPE_CLASS_NUMBER
+        }
+
+        /**
+         * Identifiers typed verbatim — the broker host and username.
+         *
+         * Without this they get the default text input, which means auto-capitalisation and
+         * autocorrect: `mqtt-user` is offered back as `Mqtt-user`, and a tap on a suggestion
+         * appends a space. Both are invisible in the summary row and both make the broker
+         * reject credentials that work everywhere else. [ConfigStore] trims as a second
+         * line of defence; this stops the mangling at the source, where the capital letter
+         * that trimming cannot undo is introduced.
+         */
+        private fun plainText(key: String) = edit(key)?.setOnBindEditTextListener {
+            it.inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
         }
 
         private fun signedDecimal(key: String) = edit(key)?.setOnBindEditTextListener {
@@ -224,6 +305,9 @@ class SettingsActivity : AppCompatActivity() {
              * path, so a password containing `@` is still stripped in full.
              */
             val USERINFO = Regex("//[^/]*@")
+
+            /** Matches the app:key in preferences.xml; holds no value, so not a ConfigStore key. */
+            const val KEY_STATUS = "status.connection"
         }
     }
 }

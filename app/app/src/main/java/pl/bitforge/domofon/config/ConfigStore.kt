@@ -53,6 +53,7 @@ object ConfigStore : PreferenceDataStore() {
     const val K_RADIUS = "home.radiusMeters"
 
     const val K_RTSP_URL = "camera.rtspUrl"
+    const val K_SNAPSHOT_SECS = "camera.snapshotSecs"
 
     const val K_REQUIRE_UNLOCK = "security.requireUnlock"
 
@@ -111,7 +112,10 @@ object ConfigStore : PreferenceDataStore() {
                 host = str(K_HOST, "").trim(),
                 port = int(K_PORT, if (tls) DomofonConfig.Defaults.PORT_TLS else DomofonConfig.Defaults.PORT_PLAIN),
                 tls = tls,
-                username = str(K_USER, ""),
+                // Trimmed like the host above. A trailing space from the soft keyboard's
+                // autocomplete is invisible in the settings row and rejected by the broker,
+                // which reads as "the same credentials work in mosquitto_sub but not here".
+                username = str(K_USER, "").trim(),
                 password = secret(K_PASS),
                 clientId = str(K_CLIENT_ID, ""),
             ),
@@ -140,6 +144,10 @@ object ConfigStore : PreferenceDataStore() {
             ),
             camera = DomofonConfig.Camera(
                 rtspUrl = secret(K_RTSP_URL).trim(),
+                // Clamped here for the same reason as the mqtt fields: a hand-edited 0 would
+                // busy-loop the grabber, and a huge value is harmless but pointless.
+                snapshotSecs = int(K_SNAPSHOT_SECS, DomofonConfig.Defaults.SNAPSHOT_SECS)
+                    .coerceIn(1, 300),
             ),
             requireUnlockForCommands = prefs.getBoolean(K_REQUIRE_UNLOCK, true),
         )

@@ -14,9 +14,10 @@ DHU_DIR="$SDK/extras/google/auto"
 ADB="$SDK/platform-tools/adb"
 PORT=5277
 
-# Match the real target: the Passat B8's 9.2" Discover Pro (1280x640). Without this
-# the DHU falls back to 800x480, and a layout that looks fine there can clip on the
-# car's wider, shorter screen. Skipped if the caller already passed their own -c/--config.
+# Drive the DHU as the Passat B8's Discover Pro. The profile uses a narrower 5:3 aspect
+# on purpose (see passat-b8.ini): the panel's native 2:1 makes Android Auto tile into its
+# two-pane dashboard, which the real car never shows. Skipped if the caller already passed
+# their own -c/--config.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_CONFIG="$HERE/passat-b8.ini"
 have_config=false
@@ -28,7 +29,7 @@ if [[ "$have_config" == false ]]; then
   if [[ -f "$DEFAULT_CONFIG" ]]; then
     config_args=(-c "$DEFAULT_CONFIG")
   else
-    echo "warning: $DEFAULT_CONFIG missing; DHU will use its 800x480 default, not the Passat's 1280x640." >&2
+    echo "warning: $DEFAULT_CONFIG missing; DHU will use its own default geometry." >&2
   fi
 fi
 
@@ -67,7 +68,7 @@ done
 [[ -t 0 ]] || echo "warning: no tty on stdin; the DHU reads console commands and will exit at EOF." >&2
 
 if [[ ${#config_args[@]} -gt 0 ]]; then
-  echo "Forwarded tcp:$PORT; starting DHU as Passat B8 Discover Pro (1280x640), libc++ from ${LIBCXX##*/ndk/})."
+  echo "Forwarded tcp:$PORT; starting DHU as Passat B8 Discover Pro (1200x720, 5:3 single-pane), libc++ from ${LIBCXX##*/ndk/})."
 else
   echo "Forwarded tcp:$PORT; starting DHU (caller-supplied config; libc++ from ${LIBCXX##*/ndk/})."
 fi

@@ -250,6 +250,20 @@ of each section.
   Backgrounding it (`nohup ... &`, or any launcher that closes stdin) kills it instantly.
   **Fix**: run it in a real terminal.
 
+- **Symptom**: the **DHU** shows a left app rail with **two apps side by side**, and
+  Android Auto's launcher/dashboard, none of which the real car does — the car runs one
+  app full-screen.
+  **Cause**: that is Coolwalk's **two-pane widescreen layout**, which Android Auto renders
+  on a **wide aspect ratio**. The panel's native 1280×640 is 2:1 — wide enough to tile.
+  (Forcing dpi does *not* fix this: dpi was tried at 240 and 320 and the DHU still tiled;
+  the trigger is the aspect, not the dp width.)
+  **Fix**: drive the DHU at a **narrower aspect** in `scripts/passat-b8.ini`. It uses a 5:3
+  aspect at native `dpi = 160` — `resolution = 1280x720` with `marginwidth = 80` cropping it
+  to 1200×720 (margins subtract total pixels; drop to `800x480` for the low-res 5:3 base).
+  This trades the car's exact 2:1 geometry for matching its single-pane behavior. Push the
+  resolution up at the same aspect via the 1920×1080 base (`marginwidth = 120` → 1800×1080);
+  if tiling returns as you raise it, the trigger is dp width, not aspect.
+
 - **Symptom**: the app is installed and runs on the phone, but never appears in the
   **DHU** launcher.
   **Cause**: the DHU won't list a sideloaded build until Android Auto is in developer mode.
@@ -387,6 +401,75 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   reflective surface under R8 — re-test RTSP snapshots in a **release** build after any
   media3 or R8 change; debug proving nothing still holds.
 
+- **Symptom**: the phone shows `Gate: unknown` with no error and the app looks like it
+  never reaches the broker — while `mosquitto_sub -h <host> -u <user> -P <pass> -t
+  'hc12/available' -W 2` from a PC on the same LAN works perfectly.
+  **Cause**: usually *nothing is wrong with the connection*. Until this was fixed, five
+  completely different states all rendered as that same silent screen: never connected;
+  connected but the broker holds no retained `hc12/rx/Gate*`; connected but every payload
+  was dropped for an unparseable `ts`; connected but the subscriptions were ACL-denied;
+  and connected and perfectly healthy. `GateRepository.connected` existed but nothing
+  consumed it, and `Main.qml` only ever showed an error when `hc12/available` actively
+  published `offline`.
+  **Fix**: `GateRepository` now exposes `ConnectionState` (`DISCONNECTED / CONNECTING /
+  CONNECTED / DEGRADED / FAILED` + a user-facing reason) and every surface binds it. The
+  phone says "Connected — no gate state reported yet" for the healthy-but-empty case,
+  which is the one that started this.
+  **To diagnose the same class of problem without a UI**, two commands settle it:
+  `mosquitto_sub -t 'hc12/#' -v -W 5` shows what is actually retained (and whether each
+  payload really carries an ISO-8601 `ts` — `GateRepository.onMessage` silently drops
+  anything else), and on the phone, with the app running:
+  ```
+  adb shell "cat /proc/net/tcp /proc/net/tcp6 | grep -i 075B"
+  ```
+  `075B` is port 1883; state `01` is ESTABLISHED. A socket there means the app is
+  connected no matter what the screen says. Note the app's uid is in the 8th column —
+  match it against `adb shell dumpsys package pl.bitforge.domofon | grep userId`.
+
+- **Symptom**: after a Wi-Fi drop, a VPN flap or moving between networks, the app never
+  reconnects — not slowly, *never*, until it is force-stopped. `adb logcat -s Domofon:W`
+  repeats `MQTT disconnected (SERVER)` / `CONNECT failed as CONNACK contained an Error
+  Code: NOT_AUTHORIZED` with a lengthening backoff. Meanwhile a cold start of the app
+  connects instantly. **This was the original "the app does not connect to my broker"
+  report** — with no connection UI, one network transition left the app permanently mute
+  and there was nothing on screen to say so.
+  **Cause**: HiveMQ's `automaticReconnect`. Measured on device, this is the whole
+  experiment:
+
+  | attempt | result |
+  |---|---|
+  | HiveMQ auto-reconnect after the flap | `NOT_AUTHORIZED`, indefinitely |
+  | cold start seconds later, same credentials, same client id | connects immediately |
+
+  So it is not the credentials, not a client-id collision with a stale session, and not
+  broker-side rate limiting — a client built from scratch is accepted at the very moment
+  the reconnector is being refused. Whatever the reconnector re-sends is not the CONNECT
+  that was handed to the builder; a consumed password buffer fits the evidence.
+  **Fix**: `automaticReconnect` is gone. `GateRepository.scheduleReconnect` rebuilds the
+  whole client on any non-USER disconnect, with the same 1 s → 30 s backoff, guarded by
+  the connection epoch so a burst of disconnect events cannot stack up rebuilds. Verified:
+  recovery in ≤ 10 s with zero auth failures, where before it never recovered.
+  **If you hit this again**, the discriminator is cheap and conclusive — reproduce the
+  failure, then `adb shell am force-stop pl.bitforge.domofon` and relaunch. If the cold
+  start works, the fault is in the reconnect path, not in anything you configured.
+
+- **Symptom**: the app dies a few seconds after launch, every launch, with an RTSP URL
+  configured. `adb logcat -b crash -d` shows `JNI DETECTED ERROR IN APPLICATION: non-zero
+  capacity for nullptr pointer` in `nativeCreatePlanes`, on the `camera-grab` thread.
+  **Cause**: `CameraFrameGrabber` points ExoPlayer's video output at an `ImageReader`
+  surface and then reads `Image.getPlanes()`. MediaCodec is free to return buffers that
+  live only on the GPU, and reading a plane from one of those aborts the process from
+  native code — it is not a Java exception, so the `try/catch` around the conversion never
+  sees it. Reproduced on a Samsung SM-G990B2 (Exynos), Android 16. Adding
+  `HardwareBuffer.USAGE_CPU_READ_OFTEN` to `ImageReader.newInstance` does **not** fix it,
+  and `Image.getHardwareBuffer()` returns nothing useful, so the condition cannot even be
+  probed for before the fatal read.
+  **Fix**: `CameraFrameGrabber.ENABLED` is `false`. The phone panel and the car template
+  both gate on it, so the UI falls back to exactly the pre-camera layout. Re-enabling
+  needs frames from somewhere that is not the video decoder — an HTTP JPEG snapshot
+  (go2rtc's `/api/frame.jpeg`, or the camera's own snapshot endpoint) is the intended
+  replacement and is far less code than the decoder path it replaces.
+
 ## Backlog / future ideas
 
 (park post-M8 wishes here)
@@ -398,3 +481,10 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   gate. The host validator is the real control, but a confirmation template would mean a
   misconfigured validator is no longer sufficient on its own.
 - **`res/raw/keep.xml`** so resource shrinking can be turned back on.
+- **Replace the RTSP frame grab with an HTTP JPEG snapshot** and flip
+  `CameraFrameGrabber.ENABLED` back on. The decoder path is a dead end on at least one
+  real device (see the `nativeCreatePlanes` entry above); a `GET` returning a JPEG needs
+  no `ImageReader`, no ExoPlayer, no media3 dependency and no R8 keep rules, and works
+  identically on the phone and the head unit. Needs one new setting (snapshot URL) and
+  should reuse the existing `SECRET_KEYS` encryption, since the URL carries credentials
+  inline exactly like the RTSP one does.

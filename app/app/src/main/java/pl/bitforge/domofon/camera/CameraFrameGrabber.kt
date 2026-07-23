@@ -6,8 +6,10 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.hardware.HardwareBuffer
 import android.media.Image
 import android.media.ImageReader
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -89,6 +91,7 @@ class CameraFrameGrabber(private val context: Context) {
     /** Begin pulling frames. No-op when no camera is configured. Safe to call repeatedly. */
     @Synchronized
     fun start() {
+        if (!ENABLED) return
         if (thread != null) return
         if (!ConfigStore.current.camera.isConfigured) {
             _status.value = Status.IDLE
@@ -135,7 +138,24 @@ class CameraFrameGrabber(private val context: Context) {
         // output format with the widest device support for CPU-readable surfaces; if a
         // device's decoder refuses it (no frame, no error — the watchdog catches it),
         // docs/10 lists the go2rtc snapshot endpoint as the escape hatch.
-        val r = ImageReader.newInstance(640, 360, ImageFormat.YUV_420_888, 2)
+        //
+        // USAGE_CPU_READ_OFTEN is load-bearing, not a hint. Without it the buffers behind
+        // this reader are allocated for the GPU alone, and on an Exynos decoder (tested:
+        // SM-G990B2) Image.getPlanes() then hands back null plane pointers with a bogus
+        // capacity. That is a JNI abort inside the framework — "non-zero capacity for
+        // nullptr pointer" — which kills the process outright; the try/catch in onImage()
+        // cannot see it, because it is not a Java exception. Requesting CPU read at
+        // allocation time is what makes the planes real.
+        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ImageReader.newInstance(
+                640, 360, ImageFormat.YUV_420_888, 2,
+                HardwareBuffer.USAGE_CPU_READ_OFTEN,
+            )
+        } else {
+            // API 28 has no usage overload. The old behaviour, and the old risk — the
+            // guard in onImage() is what keeps that path from aborting.
+            ImageReader.newInstance(640, 360, ImageFormat.YUV_420_888, 2)
+        }
         reader = r
         r.setOnImageAvailableListener({ onImage(it) }, h)
 
@@ -187,11 +207,22 @@ class CameraFrameGrabber(private val context: Context) {
     private fun onImage(reader: ImageReader) {
         val image = reader.acquireLatestImage() ?: return
         val now = System.currentTimeMillis()
-        // The decoder produces every frame; the template wants one every SNAPSHOT_MS.
+        // The decoder produces every frame; a consumer wants one every snapshotSecs. Read
+        // fresh so a settings change takes effect on the next frame without a restart.
         // Everything in between is acquired and dropped — acquiring is what keeps the
         // reader's queue from stalling the decoder.
-        if (_status.value == Status.STREAMING && now - lastSnapshotAt < SNAPSHOT_MS) {
+        val snapshotMs = ConfigStore.current.camera.snapshotSecs * 1000L
+        if (_status.value == Status.STREAMING && now - lastSnapshotAt < snapshotMs) {
             image.close()
+            return
+        }
+        if (!cpuReadable(image)) {
+            // Nothing to be done with this stream on this device: every frame will be
+            // GPU-only, and reading one would abort the process rather than throw. Give up
+            // on the attempt instead of retrying into the same wall each frame.
+            Log.w(TAG, "camera: decoder frames are not CPU-readable — giving up on this attempt")
+            image.close()
+            failAttempt()
             return
         }
         val bitmap = try {
@@ -209,9 +240,25 @@ class CameraFrameGrabber(private val context: Context) {
     }
 
     /**
+     * Whether this image's memory can really be mapped for CPU reads.
+     *
+     * Checked on the buffer itself rather than trusting what we asked [ImageReader] for,
+     * because getting it wrong is not survivable: touching a plane on a GPU-only buffer
+     * aborts the process from native code, underneath any catch block. Anything we cannot
+     * determine is treated as readable — an image with no HardwareBuffer behind it is
+     * ordinary CPU memory, which is the case this whole check exists to allow.
+     */
+    private fun cpuReadable(image: Image): Boolean = try {
+        image.hardwareBuffer?.use { (it.usage and HardwareBuffer.USAGE_CPU_READ_OFTEN) != 0L }
+            ?: true
+    } catch (e: Exception) {
+        true
+    }
+
+    /**
      * YUV_420_888 → NV21 → JPEG → downscaled Bitmap. The JPEG hop looks like a detour but
      * [YuvImage] is the only stock conversion that respects row/pixel strides without a
-     * hand-rolled loop per plane layout, and it happens at most once per [SNAPSHOT_MS].
+     * hand-rolled loop per plane layout, and it happens at most once per snapshot interval.
      */
     private fun toBitmap(image: Image): Bitmap? {
         if (image.format != ImageFormat.YUV_420_888) return null
@@ -260,11 +307,36 @@ class CameraFrameGrabber(private val context: Context) {
         return out
     }
 
-    private companion object {
-        const val TAG = "Domofon"
+    companion object {
+        /**
+         * Master switch for the RTSP snapshot, **off** because the current implementation
+         * crashes the whole process on at least one real device.
+         *
+         * ExoPlayer renders into [ImageReader]'s surface, and MediaCodec is free to hand
+         * back buffers that live only on the GPU. Reading a plane from one of those is a
+         * JNI abort inside the framework ("non-zero capacity for nullptr pointer", from
+         * `nativeCreatePlanes`) rather than a Java exception, so it cannot be caught, and
+         * there is no reliable way to ask an Image whether it is safe to read *before*
+         * reading it — `getHardwareBuffer()` returns nothing useful here. Requesting
+         * `USAGE_CPU_READ_OFTEN` at allocation time does not change the outcome.
+         * Reproduced on a Samsung SM-G990B2 (Exynos), Android 16: crash ~3 s after launch,
+         * every launch, with an RTSP URL configured.
+         *
+         * A snapshot pulled over HTTP (go2rtc, or the camera's own JPEG endpoint) sidesteps
+         * the decoder entirely and is the intended replacement — see docs/10. Everything
+         * around this class is still wired up and working, so re-enabling is one line once
+         * frames come from somewhere safe.
+         *
+         * Consumers must gate the *UI* on this too, not just [start] — see
+         * [pl.bitforge.domofon.MainActivity] and [pl.bitforge.domofon.car.GateScreen] —
+         * otherwise the panel and the car template render a placeholder that waits forever
+         * for a frame that is never coming.
+         */
+        const val ENABLED = false
 
-        /** One snapshot per this interval — also the car screen's invalidate ceiling. */
-        const val SNAPSHOT_MS = 10_000L
+        private const val TAG = "Domofon"
+
+        // Snapshot cadence is now ConfigStore.current.camera.snapshotSecs, read per frame.
 
         /** Longest edge of an emitted bitmap. */
         const val MAX_EDGE = 640

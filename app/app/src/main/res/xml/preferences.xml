@@ -12,6 +12,16 @@
 
     <PreferenceCategory app:title="@string/pref_cat_broker">
 
+        <!-- Live connection status, filled in from GateRepository.connection. Holds no
+             value, so it is never written through ConfigStore; the "status." prefix keeps
+             it out of that key namespace the same way "cat." does below. Not selectable:
+             it is a readout, and a row that highlights invites a tap that does nothing. -->
+        <Preference
+            app:key="status.connection"
+            app:title="@string/pref_connection_status"
+            app:selectable="false"
+            app:persistent="false"/>
+
         <EditTextPreference
             app:key="broker.host"
             app:title="@string/pref_host"
@@ -154,6 +164,11 @@
         <EditTextPreference
             app:key="camera.rtspUrl"
             app:title="@string/pref_rtsp_url"/>
+
+        <EditTextPreference
+            app:key="camera.snapshotSecs"
+            app:title="@string/pref_snapshot_secs"
+            app:summary="@string/pref_snapshot_secs_summary"/>
 
     </PreferenceCategory>
 
