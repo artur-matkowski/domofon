@@ -26,3 +26,7 @@ CMakeFiles/
 # IDE
 .idea/
 *.swp
+
+# Built release artifacts — large binaries, and a public repo is no place for them.
+dist/
+*.aab
