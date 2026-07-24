@@ -11,6 +11,9 @@ bridge/bridge.env
 keystore.properties
 *.jks
 
+# The release no-secrets scan list — real deployment strings, kept local (see the .example).
+scripts/secret-sentinels.txt
+
 # Gradle / Android
 .gradle/
 build/

@@ -47,65 +47,25 @@ Update this as you go — it is how future guidance sessions know where you are.
 - [ ] **M2** — Kotlin app shows embedded QML view on the phone (ch. 03)
       <br>*`app/` scaffolded and compiling; property/signal round-trip unverified on device.*
 - [ ] **M3** — RTSP video + audio playing in the app over VPN (ch. 04)
-      <br>*2026-07-23: interim **phone-side snapshot** added — the phone QML view shows the
-      same still as the head unit (a Bitmap can't cross the QtQuickView bridge, so frames
-      pass as a cache `file://` URL), and `camera.snapshotSecs` made the interval
-      configurable for both. Then, tested on device: **switched OFF**, because reading
-      `Image.getPlanes()` on ExoPlayer's decoder output is a native JNI abort on Exynos
-      (Samsung SM-G990B2) that killed the app ~3 s after every launch.*
-      <br>*2026-07-24, morning: rebuilt as an HTTP GET returning a JPEG. It worked, but the
-      probe against the real camera settled the design question the other way — the gate
-      camera answers snapshots only at a Hikvision-specific path and only with Digest auth,
-      so an app that needed one would only ever work for people who know their camera's
-      firmware. **Artur's call: RTSP is the one address the app may require.** A backend or a
-      brand table makes it a private tool, not publishable software.*
-      <br>*2026-07-24, afternoon: **stills come from the RTSP stream again, safely this
-      time.** `OffscreenTextureReader` gives the decoder a `SurfaceTexture` on an offscreen
-      EGL context and reads pixels back with `glReadPixels` — GPU-only buffers are fine when
-      the GPU does the reading, and the scale to 640 px happens free in the draw. media3 is
-      back (release APK 59.4 MB). `CameraFrameGrabber` is now just the contract and picks
-      between `RtspFrameSource` (default) and `HttpFrameSource` (optional override, still
-      there for go2rtc/Frigate). Settings leads with the camera's RTSP address; the snapshot
-      URL is marked optional. Both builds pass; **nothing has run on the phone, the DHU or
-      the car yet** — and the GL path has two failure modes to look for first: an upside-down
-      picture, or a green strip down one edge (ch. 10). Full M3 (live video + audio) remains
-      unwritten; ch. 04 §2 notes audio is unaffected by the crash that shaped all of this.*
-      <br>*2026-07-24, later: **live audio from the gate now works on the phone.** First built
-      as a separate audio-only player, which surfaced a hardware fact: this camera refuses a
-      second concurrent RTSP session — audio played but the stills stream IO-errored every
-      reconnect. So audio was folded into `RtspFrameSource`: **one session** decodes video to
-      the GL surface and audio to the speaker, gated by a new **Camera audio** switch (on by
-      default), with `handleAudioFocus` so a nav prompt ducks rather than silences. Tested on
-      the phone (SM-G990B2) over the VPN: codec is **AAC** (`audio/mp4a-latm`), plays natively.
-      media3 1.10.1's RTSP stack also covers G.711 A-law/µ-law, Opus, AC-3, AMR and raw PCM
-      with no per-codec code, so the old "ExoPlayer won't play G.711" worry is stale (ch. 10).
-      **Caveat found on device:** raw-stream audio from this camera is **choppy** (media3
-      renders its irregular RTP timing literally); a **go2rtc restream** URL smooths it, and
-      stays inside the one-URL model — no required back-end (ch. 10). Still unproven: audio
-      during an **Android Auto** session, and nav-ducking in the car. Live video via
-      QtMultimedia (ch. 04 §2) remains the only unbuilt part of M3.*
+      <br>*Camera **still + audio** run on the phone (SM-G990B2) over the VPN, from **one**
+      RTSP session in `RtspFrameSource`: the decoder draws to an offscreen EGL surface and
+      `glReadPixels` reads the still back (never `Image.getPlanes()` — that is a native abort
+      on this Exynos, ch. 10), while the same session plays audio, gated by the **Camera
+      audio** switch with `handleAudioFocus` so nav ducks rather than silences.
+      `CameraFrameGrabber` picks `RtspFrameSource` (default) or `HttpFrameSource` (optional
+      override). Codec is **AAC**; media3 1.10.1 also covers G.711 A-law/µ-law, Opus, AC-3,
+      AMR and raw PCM with no per-codec code. **Caveat found on device:** raw-stream audio is
+      **choppy** (media3 renders the camera's irregular RTP timing literally); a **go2rtc
+      restream** URL smooths it and stays inside the one-URL model (ch. 10). Still unproven:
+      **live video** (QtMultimedia, ch. 04 §2), and **audio during a car session**.*
 - [ ] **M4** — Gate control + live state working in the phone UI (ch. 05)
-      <br>*2026-07-23: MQTT connectivity is now **verified on a real device against the real
-      broker**, in an R8 release build. `GateRepository` exposes a real `ConnectionState`
-      and every surface renders it, so "connected but the broker has no retained state" no
-      longer looks identical to "cannot reach the broker" — which is what a whole debugging
-      session went into. Two live bugs fixed alongside: HiveMQ's `automaticReconnect` could
-      never re-authenticate after a network flap (the app was permanently mute until
-      force-stopped), and the settings screen crashed on open. Gate **state** is still
-      unconfirmed: the broker holds no retained `hc12/rx/Gate*`, so nothing has exercised
-      the state path end-to-end yet.*
-      <br>*2026-07-24: that last sentence was wrong, and finding out why took the session.
-      The broker **does** hold fresh retained `hc12/rx/Gate*` and `hc12/available online`;
-      the bridge is connected and subscribed. The app was reaching none of it — it sat in
-      the foreground holding owner slots with **no client and no socket at all**, a state
-      `ad92c4a` made reachable and nothing recovered from. Fixed in `GateRepository`
-      (`connect()` opens whenever there is no client, symmetric acquire/release at the
-      call sites, plus a watchdog on the invariant). Alongside it, three things that made
-      this take a whole session are now impossible: the app subscribes to `hc12/error` and
-      shows the bridge's own rejection reason, a command that never left the phone says so,
-      "waiting for the gate service" no longer renders as "no gate state reported yet", and
-      topic prefixes are normalised so a missing trailing slash cannot silently break
-      everything. See ch. 10 → MQTT. **Not yet re-tested on the device.***
+      <br>*MQTT gate control **and state** verified on the device against the real broker in
+      an R8 release build. `GateRepository` owns the connection (open whenever there is no
+      client, symmetric acquire/release across the three owners, watchdog on the invariant)
+      and exposes a real `ConnectionState` every surface renders — so "connected but no
+      retained state" no longer looks like "cannot reach the broker". The app surfaces the
+      bridge's own `hc12/error` rejection reason and normalises topic prefixes. History and
+      the bugs fixed on the way are in ch. 10 → MQTT.*
 - [ ] **M5** — Notification arrives on state change with the app backgrounded (ch. 06)
 - [ ] **M6** — Gate control on the car screen + heads-up notification, tested in DHU (ch. 07)
       <br>*Works in the DHU. The **real-car** smoke test is gated: *Unknown sources* doesn't
@@ -161,5 +121,6 @@ domofon/
             └── car/                   # CarAppService + GateScreen (AA app pipe)
 ```
 
-**Build it:** `cd app && cp local.properties.example local.properties && ./gradlew installDebug`
-(after editing the paths in `local.properties`).
+**Build it:** set up `app/local.properties` from the example, then run
+`scripts/build-debug.sh` (debug APK) or `scripts/build-release.sh` (signed Play bundle).
+Version is derived from git; see [`../scripts/README.md`](../scripts/README.md).

@@ -37,19 +37,21 @@ moment the app or an Android Auto session connects, the broker replays the curre
 
 ## Status
 
-Scaffolded, not finished. See the progress tracker in [`docs/README.md`](docs/README.md).
-`GateRepository` currently simulates the gate in memory; chapter 05 replaces its internals
-with an MQTT client without changing its public API, which every UI surface already uses.
+In progress. See the progress tracker in [`docs/README.md`](docs/README.md). MQTT gate
+control/state and the RTSP camera still **and audio** run on the phone; Android Auto works
+in the DHU. Not yet proven on hardware: live video, geofencing, and audio during a car
+session. Nothing is "done" until it has run on a device.
 
 ## Build
 
 ```bash
-cd app
-cp local.properties.example local.properties   # then set sdk.dir and qtPath
-./gradlew installDebug
+cd app && cp local.properties.example local.properties   # then set sdk.dir and qtPath
+./scripts/build-debug.sh              # debug APK  -> dist/
+./scripts/build-release.sh            # signed Play bundle -> dist/ (see scripts/README.md)
 ```
 
-Requires Qt 6.11.1 for Android (arm64-v8a), NDK r27c (`27.2.12479018`), a real JDK 21, and
+The version is derived from git — nothing is hand-edited (`scripts/README.md`). Requires
+Qt 6.11.1 for Android (arm64-v8a), NDK r27c (`27.2.12479018`), a real JDK 21, and
 `platforms;android-36`. Chapter 01 covers the setup; chapter 10 collects every trap that
 has already cost someone an afternoon.
 

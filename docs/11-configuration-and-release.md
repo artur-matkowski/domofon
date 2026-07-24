@@ -26,12 +26,13 @@ the protocol, it lives in `ConfigStore` and nowhere else.** Topic *prefixes* are
 deployment. The signal names inside them (`GateOpened`, `GateClosing`, …) are protocol,
 and stay in code — see §2.
 
-Verify it holds, every release:
+This is verified on every release automatically: `scripts/build-release.sh` scans the
+bundle against `scripts/secret-sentinels.txt` (your deployment strings, kept local — see the
+`.example`) and refuses to publish on any hit. To check by hand:
 
 ```bash
-./gradlew :app:assembleRelease
-unzip -p app/build/outputs/apk/release/app-release-unsigned.apk \
-  | strings -a | grep -aicF '<your broker host>'      # must print 0
+unzip -p dist/domofon-<version>-release.aab | strings -a | grep -aicF '<your broker host>'
+# must print 0
 ```
 
 ## 2. The configuration model
@@ -167,17 +168,32 @@ is a genuine trade rather than an obvious win. Parked in the ch. 10 backlog.
 
 ## 4. Release build
 
+One-time setup of the upload key:
+
 ```bash
 cd app
 cp keystore.properties.example keystore.properties   # then edit it
 keytool -genkeypair -v -keystore upload.jks -keyalg RSA -keysize 4096 \
         -validity 10000 -alias domofon-upload
-./gradlew bundleRelease
 ```
+
+Then every release is just:
+
+```bash
+scripts/build-release.sh        # -> dist/domofon-<version>-release.{aab,apk}
+```
+
+It computes the version from git (below), builds the bundle and a testable release APK,
+runs the §1 no-secrets scan, and tags the release. See `scripts/README.md`.
 
 `keystore.properties` and `*.jks` are gitignored. **Back up `upload.jks` off this
 machine.** With Play App Signing the app signing key is Google's and recoverable; the
 upload key is not, and losing it means losing the ability to publish updates.
+
+**Version is derived from git — never hand-edited.** `versionCode` is the commit count
+(monotonic, which is what Play requires); `versionName` is the next semver the release
+script computes from Conventional Commits since the last `v*` tag (`feat!`/`BREAKING
+CHANGE` → major, `feat` → minor, otherwise patch). See `app/app/build.gradle.kts`.
 
 ### R8 traps specific to this project
 
@@ -257,7 +273,8 @@ a Play Console declaration with its own demo video.
 
 ## 6. Acceptance tests
 
-- [ ] Release APK contains no broker host, username, password or coordinate (§1).
+- [ ] Release bundle contains no broker host, username, password or coordinate (§1) —
+      enforced automatically by the release script's no-secrets scan.
 - [ ] Fresh install opens `SettingsActivity`, not a dead QML screen.
 - [ ] Settings survive force-stop; `adb shell run-as pl.bitforge.domofon` shows the stored
       password as ciphertext, not plaintext.

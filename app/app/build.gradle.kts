@@ -15,6 +15,22 @@ val keystoreProps = Properties().apply {
 }
 val hasSigning = keystoreProps.getProperty("storeFile") != null
 
+// Version comes from git, never hand-edited (see scripts/build-release.sh and docs/11 §4).
+//   versionCode = commit count — monotonic as long as history only grows, which is exactly
+//                 what Play requires of every upload.
+//   versionName = `git describe` for debug/dev builds; the release script overrides it with
+//                 the clean semver it computes from Conventional Commits (-PversionName=X.Y.Z).
+// Both fall back to a -P property so Android Studio and a .git-less checkout still build.
+fun git(vararg a: String): String = try {
+    ProcessBuilder(listOf("git", *a)).directory(rootDir).redirectErrorStream(true)
+        .start().inputStream.bufferedReader().readText().trim()
+} catch (_: Exception) { "" }
+
+val gitVersionCode = (findProperty("versionCode") as String?)?.toIntOrNull()
+    ?: git("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
+val gitVersionName = (findProperty("versionName") as String?)
+    ?: git("describe", "--tags", "--always", "--dirty").ifBlank { "0.0.0" }
+
 android {
     namespace = "pl.bitforge.domofon"
     compileSdk = 36
@@ -28,8 +44,8 @@ android {
         applicationId = "pl.bitforge.domofon"
         minSdk = 28          // Qt for Android's floor
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = gitVersionCode
+        versionName = gitVersionName
 
         ndk { abiFilters += "arm64-v8a" }
     }

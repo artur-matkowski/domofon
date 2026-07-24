@@ -80,3 +80,12 @@ home via **OpenVPN for Android** (always-on, per-app).
 - Release builds must be re-tested on device. Qt and the shaded Netty both resolve classes
   reflectively, so R8 working in debug proves nothing. Resource shrinking stays **off**
   until `res/raw/keep.xml` exists — see ch. 11 §4.
+- **Building.** Claude builds with `scripts/build-debug.sh`, and only in a scratchpad copy
+  of the repo — never in-tree (the tree is `artur`-owned; see the build-ownership memory).
+  `scripts/build-release.sh` is Artur's: it needs the gitignored signing key and produces
+  the real Play bundle. Version is derived from git — never hand-edit `versionCode`/`Name`.
+- **Commit convention: Conventional Commits.** `feat:`, `fix:`, `docs:`, `chore:`,
+  `refactor:`, `test:`, `build:` (optional `(scope)`); `feat!:` or a `BREAKING CHANGE:`
+  footer marks a breaking change. The release script derives the semver from these, so the
+  type is load-bearing, not cosmetic. Still end commit messages with the
+  `Co-Authored-By: Claude` trailer. Commits Artur authors himself are exempt.
