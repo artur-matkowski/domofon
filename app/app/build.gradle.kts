@@ -115,6 +115,18 @@ android {
     }
 }
 
+// Qt Gradle Plugin 1.4 wires its AAR-generation task (QtBuildTask) into the *debug* compile
+// tasks (compileDebugKotlin/JavaWithJavac) but not the *release* ones — for release it only
+// hooks the later assemble/collect/lintVital tasks. On a clean release build the Kotlin
+// compiler therefore runs before the Qt AAR (QtQuickView, QtQmlStatus, …) is generated, and
+// every org.qtproject.* reference is unresolved. Debug is unaffected; release fails only when
+// the aars/ dir wasn't already populated by a previous build. Wire the release compile tasks
+// to QtBuildTask ourselves so the AAR always exists first. Lazy on purpose: the AGP variant
+// compile tasks and the Qt task are all registered after this script block evaluates.
+tasks.matching {
+    it.name == "compileReleaseKotlin" || it.name == "compileReleaseJavaWithJavac"
+}.configureEach { dependsOn("QtBuildTask") }
+
 dependencies {
     // 1.18.0, not 1.19.0: core 1.19.0 declares minCompileSdk=37 and would hard-fail
     // against compileSdk 36.

@@ -648,6 +648,25 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   independent of the configured interval. So a camera that recovers can take up to 30 s to
   show it, no matter how low *Snapshot interval* is set.
 
+- **Symptom**: `scripts/build-release.sh` fails on a **clean** release build while
+  `build-debug.sh` is fine, with `compileReleaseKotlin` reporting `Unresolved reference
+  'qtproject'` / `QtQuickView` / `QtQmlStatus` in `MainActivity.kt`. Confusingly it may
+  *succeed* if run twice, and the version never advances (0.1.0 recomputed each time).
+  **Cause**: two independent things. (1) The Qt Gradle Plugin 1.4 hooks its AAR-generation
+  task (`QtBuildTask`, which produces `qt_generated/aars/domofon.aar` with the QtQuickView
+  classes) into the *debug* compile tasks but, for release, only into the later
+  assemble/collect/lintVital tasks — **not `compileReleaseKotlin`**. On a clean build Gradle
+  runs the release Kotlin compile before the Qt AAR exists, so the `aars/*.aar` fileTree is
+  empty and every `org.qtproject.*` symbol is unresolved. It "works the second time" only
+  because a prior run left the AAR on disk. (2) The build-release script tags `v<next>` only
+  *after* a successful build, so a failed build never bumps the baseline — hence the same
+  0.1.0 every attempt (this part is by design, just surprising when the build keeps failing).
+  **Fix** (2026-07-24, **resolved**): in `app/app/build.gradle.kts`, make the release compile
+  tasks depend on the Qt task:
+  `tasks.matching { it.name == "compileReleaseKotlin" || it.name == "compileReleaseJavaWithJavac" }.configureEach { dependsOn("QtBuildTask") }`.
+  Verified with a clean `:app:bundleRelease :app:assembleRelease` (R8 on) in a scratchpad
+  copy — both the `.aab` and the release `.apk` build. Still to prove on device (R8).
+
 ## Backlog / future ideas
 
 (park post-M8 wishes here)
