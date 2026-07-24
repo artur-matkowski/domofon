@@ -97,7 +97,14 @@ class CameraFrameGrabber(private val context: Context) {
          * full-resolution frame courts `TransactionTooLarge`. On the RTSP path this is also
          * the size the GPU scales to during the draw, so nothing larger is ever decoded to
          * CPU memory in the first place.
+         *
+         * 960 (up from 640) so the `PaneTemplate` image fills a wide head-unit slot crisply
+         * rather than soft — the Car App Library gives no control over layout proportions, so
+         * source sharpness is the only lever on how large the camera reads. This is a
+         * trade-off against the ~1 MB binder limit, not a free dial: a 960-edge ARGB frame is
+         * a few MB raw, so if the head unit ever reports `TransactionTooLarge` when the
+         * template is pushed, step this back down (720 is still sharper than the old 640).
          */
-        const val MAX_EDGE = 640
+        const val MAX_EDGE = 960
     }
 }
