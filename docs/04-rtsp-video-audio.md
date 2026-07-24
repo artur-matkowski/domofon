@@ -110,20 +110,49 @@ Caveats, none of which apply to the RTSP path:
   browser goes out unauthenticated and 401s, reading exactly like a wrong password. The
   userinfo is stripped and re-sent as a `Basic` header so the field behaves like the RTSP one.
 
-## 2. QtMultimedia in QML — *not built yet*
+## 2. Live audio (built) — and the QtMultimedia video route (*not built yet*)
 
-Everything from here down is the live-playback route, which nothing implements — the
-same `camera.rtspUrl` §1 already reads, played rather than sampled. Sketch, not record:
-unlike §1, none of this has met a device.
+**Audio is built** (2026-07-24, tested on the phone). It plays — with one caveat proven on
+device: on a camera whose audio RTP timing is irregular, media3's RTSP path renders it
+**choppy** (this camera does exactly that). Pointing the address at a **go2rtc restream** —
+which re-times the packets — makes it smooth, and stays inside the one-URL model since the app
+still requires no backend of its own (docs/10 has the symptom and the reasoning). The
+QtMultimedia *video* route further down is not built — its CMake link, QML and lifecycle are a
+sketch, not a record; none of it has met a device.
 
-A note for whenever it is picked up: **audio does not inherit §1's constraint.** The abort
-was specific to reading video *frames* on the CPU; playing a stream never touches that path.
-Audio-only playback through media3 — the video track disabled, the mirror of what
-`RtspFrameSource` does — would work on the phone *and* during an Android Auto session, since
-it lives in Kotlin rather than QML. That is the cheaper half of this chapter. Two things to
-settle when starting: AudioFocus (an intercom must duck navigation, not fight it), and
-whether the camera's codec needs a go2rtc transcode — many speak G.711, which ExoPlayer
-will not play.
+**Audio does not inherit §1's constraint** — the abort was specific to reading video *frames*
+on the CPU; decoding and playing a stream never touches that path.
+
+**It rides the stills session, not a second one — and that split was tried first.** The
+initial build was a separate `RtspAudioPlayer`, an audio-only ExoPlayer mirroring
+`RtspFrameSource`. On the phone the audio played fine, but the stills stream then IO-errored
+(`ERROR_CODE_IO_UNSPECIFIED`) every reconnect: **this camera refuses the second concurrent
+RTSP session** (and/or the two streams together saturate the VPN). So audio was folded into
+`RtspFrameSource` itself — one session, video decoded to the GL surface and audio to the
+speaker, which is also the least this pulls over the tunnel. `RtspAudioPlayer` is gone. The
+lesson generalises: **one RTSP session per camera** (docs/10 has the symptom).
+
+Audio is gated by the **Camera audio** setting (on by default — a switch, not a URL, so the
+gate can be silenced without unsetting the address). When on, `RtspFrameSource` stops
+disabling the audio track and sets `setAudioAttributes(usage MEDIA / content SPEECH,
+handleAudioFocus = true)` on the same player, so a navigation guidance prompt (which requests
+transient-duck) lowers the gate audio for its duration rather than being silenced by it —
+duck, not fight. Being Kotlin, it plays on the phone and, in principle, during an Android
+Auto session (still to prove on the car).
+
+On codecs: the test camera sends **AAC** (`audio/mp4a-latm`), which plays natively. And
+contrary to the earlier worry, **G.711 is fine too** — media3 1.10.1's RTSP stack maps and
+decodes PCMA (`audio/g711-alaw`) and PCMU (`audio/g711-mlaw`) alongside AAC, AC-3, AMR/AMR-WB,
+Opus and raw PCM, with no per-codec code. Enabling audio simply plays whatever the SDP offers
+among that set; `RtspFrameSource` logs the selected codec once (format only, never the URL).
+A go2rtc transcode is the fallback for a codec outside that set (e.g. G.726, an explicit
+player error) — and a go2rtc **restream** is the fallback for choppy audio on a camera with
+irregular RTP timing (above). Neither is a *required* service: the app takes any one RTSP URL,
+and a user who runs go2rtc simply points at it. For a camera whose raw stream is well-behaved,
+nothing extra is needed — which is the goal.
+
+Still to prove on hardware: that Android Auto permits a `CarAppService` to play this audio at
+all, and the nav-ducking behaviour in the car.
 
 Qt 6's FFmpeg backend (the default on Android) handles RTSP with audio. Make sure the
 QML project's CMake links `Multimedia` (`find_package(Qt6 ... Multimedia)` /

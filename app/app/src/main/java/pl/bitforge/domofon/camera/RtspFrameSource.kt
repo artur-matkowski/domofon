@@ -5,18 +5,29 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import pl.bitforge.domofon.config.ConfigStore
 
 /**
- * Stills pulled straight out of the RTSP stream — the only camera address a user should
- * ever have to know.
+ * Stills — and, when the user wants it, audio — pulled straight out of the RTSP stream, the
+ * only camera address a user should ever have to know.
+ *
+ * **One session carries both.** Audio was first tried as a second, separately-owned player;
+ * this camera refuses the second RTSP connection — the stills stream IO-errors every cycle
+ * while the audio one plays (verified on device 2026-07-24, docs/10). So the audio rides this
+ * same player: video decodes to the GL surface, audio to the speaker, over a single
+ * connection — which is also the least this pulls over the VPN. It is gated by the
+ * `camera.audioEnabled` setting and, being Kotlin, plays on the phone and in a car session
+ * alike. Playing audio does not touch the CPU-frame path the `nativeCreatePlanes` abort was
+ * about (docs/04 §2), so it is safe here.
  *
  * This is a deliberate return to the source the app started with, after an HTTP snapshot
  * detour. The detour worked, but it made the app *deployment-shaped*: the gate camera here
@@ -54,6 +65,7 @@ class RtspFrameSource(
     private var started = false
     private var lastSnapshotAt = 0L
     private var streaming = false
+    private var loggedAudioCodec = false
 
     private val retryRunnable = Runnable { startAttempt() }
 
@@ -109,6 +121,7 @@ class RtspFrameSource(
         }
         onStatus(CameraFrameGrabber.Status.CONNECTING)
         streaming = false
+        loggedAudioCodec = false
         lastSnapshotAt = 0L
 
         val textureReader = OffscreenTextureReader()
@@ -124,13 +137,43 @@ class RtspFrameSource(
 
         val p = ExoPlayer.Builder(context).setLooper(h.looper).build()
         player = p
-        // Audio is decoded for nothing here. When live audio arrives (ch. 04 §2) it will be
-        // a second, separately-owned player: this one starts and stops with a *screen*, and
-        // an intercom's audio should not.
+        // Audio rides this same session when the user wants it (a second RTSP connection is
+        // what this camera refuses — see the class note). Read fresh so the setting lands on
+        // the next connect; the track is disabled outright when off, so a muted stream decodes
+        // no audio at all.
+        val audio = ConfigStore.current.camera.audioEnabled
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !audio)
             .build()
+        if (audio) {
+            // handleAudioFocus = true: ExoPlayer requests ordinary media focus and honours
+            // transient ducking, so a navigation prompt lowers the gate audio for its
+            // duration rather than being silenced by it — duck, not fight.
+            p.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+        }
         p.addListener(object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                // The camera's audio codec, logged once — the answer to "will this camera's
+                // audio play" is empirical, and this records it. Format only; never the URL.
+                if (loggedAudioCodec) return
+                for (group in tracks.groups) {
+                    if (group.type != C.TRACK_TYPE_AUDIO || !group.isSelected) continue
+                    for (i in 0 until group.length) {
+                        if (group.isTrackSelected(i)) {
+                            Log.i(TAG, "camera: audio codec ${group.getTrackFormat(i).sampleMimeType}")
+                            loggedAudioCodec = true
+                            return
+                        }
+                    }
+                }
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 // Never the URL, never the exception message (it can embed the URL —
                 // credentials inline): the error *code* is all diagnosis needs.

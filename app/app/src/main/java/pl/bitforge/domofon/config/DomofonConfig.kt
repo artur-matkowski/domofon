@@ -146,6 +146,13 @@ data class DomofonConfig(
          * Clamped in [ConfigStore.read].
          */
         val snapshotSecs: Int,
+        /**
+         * Play the RTSP stream's audio to the speaker while a camera view is open — see
+         * [pl.bitforge.domofon.camera.RtspAudioPlayer]. On by default; a switch, not a URL,
+         * so a user can silence the gate without unsetting [rtspUrl]. Only the RTSP source
+         * carries audio, so this does nothing for a snapshot-only ([hasSnapshot]) config.
+         */
+        val audioEnabled: Boolean,
     ) {
         /** An HTTP snapshot endpoint is configured, and overrides the stream as the source. */
         val hasSnapshot: Boolean get() = snapshotUrl.isNotBlank()
@@ -158,7 +165,7 @@ data class DomofonConfig(
 
         /** Same reasoning as [Broker.toString] — both URLs embed the credentials. */
         override fun toString(): String =
-            "Camera(snapshot=$hasSnapshot, stream=$hasStream, snapshotSecs=$snapshotSecs)"
+            "Camera(snapshot=$hasSnapshot, stream=$hasStream, snapshotSecs=$snapshotSecs, audio=$audioEnabled)"
     }
 
     companion object {
@@ -187,7 +194,12 @@ data class DomofonConfig(
                 keepAliveSeconds = Defaults.KEEP_ALIVE_S,
             ),
             home = Home(enabled = false, latitude = null, longitude = null, radiusMeters = Defaults.RADIUS_M),
-            camera = Camera(snapshotUrl = "", rtspUrl = "", snapshotSecs = Defaults.SNAPSHOT_SECS),
+            camera = Camera(
+                snapshotUrl = "",
+                rtspUrl = "",
+                snapshotSecs = Defaults.SNAPSHOT_SECS,
+                audioEnabled = Defaults.AUDIO_ENABLED,
+            ),
             requireUnlockForCommands = true,
         )
     }
@@ -212,6 +224,9 @@ data class DomofonConfig(
 
         /** Snapshot cadence in seconds — the old hardcoded 10 s, now the default. */
         const val SNAPSHOT_SECS = 10
+
+        /** Gate audio plays by default: hearing the gate is the point of an entry phone. */
+        const val AUDIO_ENABLED = true
 
         /** 2 km — well above docs/08's ~150 m reliability floor; fires ~2 min out at 60 km/h. */
         const val RADIUS_M = 2_000f

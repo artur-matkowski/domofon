@@ -70,6 +70,20 @@ Update this as you go — it is how future guidance sessions know where you are.
       the car yet** — and the GL path has two failure modes to look for first: an upside-down
       picture, or a green strip down one edge (ch. 10). Full M3 (live video + audio) remains
       unwritten; ch. 04 §2 notes audio is unaffected by the crash that shaped all of this.*
+      <br>*2026-07-24, later: **live audio from the gate now works on the phone.** First built
+      as a separate audio-only player, which surfaced a hardware fact: this camera refuses a
+      second concurrent RTSP session — audio played but the stills stream IO-errored every
+      reconnect. So audio was folded into `RtspFrameSource`: **one session** decodes video to
+      the GL surface and audio to the speaker, gated by a new **Camera audio** switch (on by
+      default), with `handleAudioFocus` so a nav prompt ducks rather than silences. Tested on
+      the phone (SM-G990B2) over the VPN: codec is **AAC** (`audio/mp4a-latm`), plays natively.
+      media3 1.10.1's RTSP stack also covers G.711 A-law/µ-law, Opus, AC-3, AMR and raw PCM
+      with no per-codec code, so the old "ExoPlayer won't play G.711" worry is stale (ch. 10).
+      **Caveat found on device:** raw-stream audio from this camera is **choppy** (media3
+      renders its irregular RTP timing literally); a **go2rtc restream** URL smooths it, and
+      stays inside the one-URL model — no required back-end (ch. 10). Still unproven: audio
+      during an **Android Auto** session, and nav-ducking in the car. Live video via
+      QtMultimedia (ch. 04 §2) remains the only unbuilt part of M3.*
 - [ ] **M4** — Gate control + live state working in the phone UI (ch. 05)
       <br>*2026-07-23: MQTT connectivity is now **verified on a real device against the real
       broker**, in an R8 release build. `GateRepository` exposes a real `ConnectionState`

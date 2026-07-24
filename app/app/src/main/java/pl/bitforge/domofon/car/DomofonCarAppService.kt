@@ -46,6 +46,8 @@ class DomofonCarAppService : CarAppService() {
             // The session owns the frame grabber the way it owns its MQTT slot. START/STOP
             // rather than create/destroy: a backgrounded car app must not keep fetching
             // stills over the VPN for a screen nobody is looking at.
+            // Carries the still *and* the gate audio (one RTSP session, gated by the Camera
+            // audio setting) — hearing the gate while driving is the point of this on the car.
             val grabber = CameraFrameGrabber(carContext)
 
             // Observer first, then connect. Registering afterwards leaks an owner slot for

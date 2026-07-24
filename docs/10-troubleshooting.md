@@ -585,6 +585,38 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   and a green strip down one edge (the `SurfaceTexture` transform matrix is being ignored,
   so the decoder's macroblock padding is being sampled).
 
+- **Symptom**: with audio playing from the gate, the *picture* freezes and logcat shows
+  `camera: playback error ERROR_CODE_IO_UNSPECIFIED` on a loop — one failure every reconnect,
+  the audio unaffected. Seen the moment live audio was added.
+  **Cause**: audio was first built as a *second* ExoPlayer (`RtspAudioPlayer`) opening its own
+  RTSP session to the same camera, in parallel with `RtspFrameSource`'s. **This camera allows
+  only one RTSP session** — the second connection knocks the first off (and over the VPN two
+  streams also compete for the tunnel). Whichever connected second won; the stills lost.
+  Reproduced on SM-G990B2, 2026-07-24, every foreground cycle.
+  **Fix**: **one RTSP session per camera.** Audio was folded into `RtspFrameSource` — the same
+  player keeps the audio track (`setTrackTypeDisabled(AUDIO, !audioEnabled)`) and renders it to
+  the speaker while it renders video to the GL surface. `RtspAudioPlayer` was deleted. One
+  handshake, no contention, and the least data over the VPN. If a future need ever wants audio
+  and video on genuinely independent lifecycles, the answer is a go2rtc restream (one ingest,
+  many clients), **not** a second direct connection — assume cameras cap concurrent sessions.
+
+- **Symptom**: gate audio plays but is **choppy / stuttering** — on Wi-Fi and over the VPN
+  alike, with or without the head unit connected, so it is not bandwidth. The *same* camera's
+  audio is smooth when viewed in Frigate.
+  **Cause**: media3's RTSP client renders the camera's raw RTP timing more or less literally,
+  and this camera's audio RTP is irregular enough that the audio renderer underruns. Frigate
+  is not a fair comparison: it plays **go2rtc's** re-muxed output, and go2rtc reorders and
+  re-timestamps the packets — exactly the jitter-smoothing media3's RTSP path does not do. And
+  for a *live* source more buffering cannot help: there is no future audio to pre-buffer.
+  **Fix / workaround**: point **Camera address (RTSP)** at a go2rtc RTSP restream instead of
+  the camera — `rtsp://<host>:8554/<stream>` (Frigate bundles go2rtc; its stream names come
+  from the config, e.g. `drzwi_main`). This stays inside the one-URL model — the app still
+  requires no backend of its own; a user who already runs go2rtc/Frigate just points at it.
+  Confirmed smooth on Artur's setup 2026-07-24. **Accepted limitation**: a raw-camera user
+  with no go2rtc may still hear choppiness on a camera whose RTP timing is irregular; revisit
+  if media3's RTSP jitter handling improves. Use the `_main` stream — audio is usually absent
+  from substreams.
+
 - **Symptom**: the snapshot URL returns a picture instantly with `curl` from the laptop,
   and the app shows "Camera unreachable" forever. `adb logcat -s Domofon:W` says
   `camera: snapshot fetch failed (UnknownServiceException)`, and unfiltered logcat has
@@ -627,11 +659,15 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   gate. The host validator is the real control, but a confirmation template would mean a
   misconfigured validator is no longer sufficient on its own.
 - **`res/raw/keep.xml`** so resource shrinking can be turned back on.
-- **Live audio from the gate camera** (ch. 04 §2). Media3 with the *video* track disabled
-  — the mirror of what `RtspFrameSource` does — which works on the phone and during an
-  Android Auto session, since it lives in Kotlin rather than QML. Two things to settle when
-  it is picked up: AudioFocus (an intercom must duck navigation, not fight it) and whether
-  the camera's codec needs a go2rtc transcode (G.711 is common and ExoPlayer will not play it).
+- ~~**Live audio from the gate camera**~~ — **done 2026-07-24, on the phone.** Audio is folded
+  into `RtspFrameSource` (one RTSP session — see the concurrent-session entry above), gated by
+  a **Camera audio** switch (on by default). ExoPlayer handles focus
+  (`setAudioAttributes(..., handleAudioFocus = true)`, usage MEDIA / content SPEECH) so a nav
+  prompt ducks the gate audio rather than being silenced by it. Codec on the test camera is
+  **AAC**; and **G.711 is not a problem** either (the old note was wrong) — media3 1.10.1's
+  RTSP stack decodes PCMA/PCMU, AAC, AC-3, AMR/AMR-WB, Opus and raw PCM with no per-codec code,
+  so only a codec outside that set (e.g. G.726) would need a go2rtc transcode. Left to prove:
+  audio during an **Android Auto** session, and nav-ducking in the car.
 - ~~Replace the RTSP frame grab with an HTTP JPEG snapshot~~ — **superseded 2026-07-24.** It
   was built and it worked, but it made the app camera-brand-dependent; the frame grab came
   back on a safe (GL) footing instead, and the HTTP path stayed as an optional override.

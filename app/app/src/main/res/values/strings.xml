@@ -57,6 +57,9 @@
     <string name="pref_snapshot_url_summary">Leave empty unless you have a reason. An HTTP address returning one JPEG (go2rtc, Frigate, or the camera\'s own snapshot path) — takes the picture from there instead of the stream.</string>
     <string name="pref_snapshot_secs">Snapshot interval (seconds)</string>
     <string name="pref_snapshot_secs_summary">How often a fresh still is pulled from the camera, on the phone and the car screen. Default 10. Lower is more current at a higher data cost over the VPN.</string>
+    <string name="pref_audio">Camera audio</string>
+    <string name="pref_audio_on">Playing the gate\'s sound while the camera is open. Comes from the RTSP address above.</string>
+    <string name="pref_audio_off">Muted. The camera address still shows the picture; only the sound is off.</string>
 
     <!-- Security -->
     <string name="pref_cat_security">Security</string>

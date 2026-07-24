@@ -56,6 +56,7 @@ object ConfigStore : PreferenceDataStore() {
     const val K_SNAPSHOT_URL = "camera.snapshotUrl"
     const val K_RTSP_URL = "camera.rtspUrl"
     const val K_SNAPSHOT_SECS = "camera.snapshotSecs"
+    const val K_AUDIO_ENABLED = "camera.audioEnabled"
 
     const val K_REQUIRE_UNLOCK = "security.requireUnlock"
 
@@ -152,6 +153,7 @@ object ConfigStore : PreferenceDataStore() {
                 // busy-loop the grabber, and a huge value is harmless but pointless.
                 snapshotSecs = int(K_SNAPSHOT_SECS, DomofonConfig.Defaults.SNAPSHOT_SECS)
                     .coerceIn(1, 300),
+                audioEnabled = prefs.getBoolean(K_AUDIO_ENABLED, DomofonConfig.Defaults.AUDIO_ENABLED),
             ),
             requireUnlockForCommands = prefs.getBoolean(K_REQUIRE_UNLOCK, true),
         )

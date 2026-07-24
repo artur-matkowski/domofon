@@ -185,6 +185,16 @@
             app:title="@string/pref_snapshot_secs"
             app:summary="@string/pref_snapshot_secs_summary"/>
 
+        <!-- Audio comes from the RTSP stream only (the snapshot override carries none), and
+             plays while a camera view is open. On by default; off silences the gate without
+             unsetting the URL. See docs/04 §2. -->
+        <SwitchPreferenceCompat
+            app:key="camera.audioEnabled"
+            app:title="@string/pref_audio"
+            app:summaryOn="@string/pref_audio_on"
+            app:summaryOff="@string/pref_audio_off"
+            app:defaultValue="true"/>
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/pref_cat_security">
