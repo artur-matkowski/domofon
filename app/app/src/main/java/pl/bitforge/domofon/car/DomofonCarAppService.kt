@@ -12,6 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
+import pl.bitforge.domofon.geo.HomeDistanceTracker
 
 class DomofonCarAppService : CarAppService() {
 
@@ -50,6 +51,11 @@ class DomofonCarAppService : CarAppService() {
             // audio setting) — hearing the gate while driving is the point of this on the car.
             val grabber = CameraFrameGrabber(carContext)
 
+            // Distance to home, started and stopped with the session exactly like the
+            // grabber: a backgrounded car app must not keep pulling location for a screen
+            // nobody is looking at. Silent unless the geofence feature is on and located.
+            val distanceTracker = HomeDistanceTracker(carContext)
+
             // Observer first, then connect. Registering afterwards leaks an owner slot for
             // good if the host tears the session down in between — after which the count
             // never returns to zero and the connection is never rebuilt.
@@ -61,8 +67,14 @@ class DomofonCarAppService : CarAppService() {
             var holdsConnection = false
             lifecycle.addObserver(
                 object : DefaultLifecycleObserver {
-                    override fun onStart(owner: LifecycleOwner) = grabber.start()
-                    override fun onStop(owner: LifecycleOwner) = grabber.stop()
+                    override fun onStart(owner: LifecycleOwner) {
+                        grabber.start()
+                        distanceTracker.start()
+                    }
+                    override fun onStop(owner: LifecycleOwner) {
+                        grabber.stop()
+                        distanceTracker.stop()
+                    }
                     override fun onDestroy(owner: LifecycleOwner) {
                         if (!holdsConnection) return
                         holdsConnection = false
@@ -76,7 +88,7 @@ class DomofonCarAppService : CarAppService() {
             holdsConnection = true
             GateNotifier.observe(carContext, lifecycleScope)
 
-            return GateScreen(carContext, grabber)
+            return GateScreen(carContext, grabber, distanceTracker)
         }
     }
 }

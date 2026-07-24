@@ -23,6 +23,8 @@ import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.gate.BridgeStatus
 import pl.bitforge.domofon.gate.ConnectionStatus
 import pl.bitforge.domofon.gate.GateRepository
+import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.geo.formatHomeDistance
 
 /**
  * The car screen. Note what is absent: no MQTT, no state parsing — the same
@@ -48,13 +50,15 @@ import pl.bitforge.domofon.gate.GateRepository
 class GateScreen(
     carContext: CarContext,
     private val grabber: CameraFrameGrabber,
+    private val distanceTracker: HomeDistanceTracker,
 ) : Screen(carContext) {
 
     init {
         // Redraw on state changes, on the service going away, on the user finishing setup
-        // on the phone while the car session is already open — and on a new camera frame,
-        // which arrives at most once per grabber snapshot interval, so the invalidate rate
-        // stays well inside host etiquette.
+        // on the phone while the car session is already open — and on a new camera frame or
+        // distance reading. Both arrive at most once every several seconds (the grabber's
+        // snapshot interval; the tracker's ≥10 s cadence), so the invalidate rate stays well
+        // inside host etiquette.
         listOf(
             GateRepository.gateState,
             GateRepository.bridgeStatus,
@@ -62,6 +66,7 @@ class GateScreen(
             GateRepository.lastError,
             ConfigStore.config,
             grabber.frame,
+            distanceTracker.distance,
         )
             .merge()
             .onEach { invalidate() }
@@ -113,17 +118,20 @@ class GateScreen(
         val error = GateRepository.lastError.value
         val heading = if (error.isEmpty()) title else "Gate — $error"
 
+        // "" whenever the tracker has nothing (feature off, not granted, no fix yet).
+        val distanceText = formatHomeDistance(distanceTracker.distance.value)
+
         // Same gate as the phone panel: no snapshot URL, no frame coming, and the camera
         // template would be a permanent empty placeholder on the head unit.
         return if (ConfigStore.current.camera.hasPicture) {
-            cameraTemplate(heading, primary.label, primary.action)
+            cameraTemplate(heading, distanceText, primary.label, primary.action)
         } else {
-            gridTemplate(heading, primary.label, primary.action)
+            gridTemplate(heading, distanceText, primary.label, primary.action)
         }
     }
 
     /** The original camera-less layout: one grid cell that is the gate button. */
-    private fun gridTemplate(title: String, label: String, action: String): Template {
+    private fun gridTemplate(title: String, distanceText: String, label: String, action: String): Template {
         val icon = if (action == "close") R.drawable.ic_gate_close else R.drawable.ic_gate_open
 
         val button = GridItem.Builder()
@@ -132,23 +140,30 @@ class GateScreen(
             .setOnClickListener { GateRepository.sendCommand(action) }
             .build()
 
+        // A GridTemplate has no free text row, so distance folds into the header title.
         return GridTemplate.Builder()
-            .setTitle(title)
+            .setTitle(if (distanceText.isEmpty()) title else "$title · $distanceText")
             .setHeaderAction(Action.APP_ICON)
             .setSingleList(ItemList.Builder().addItem(button).build())
             .build()
     }
 
     /** Camera configured: pane with the latest still and the gate button beneath it. */
-    private fun cameraTemplate(title: String, label: String, action: String): Template {
+    private fun cameraTemplate(title: String, distanceText: String, label: String, action: String): Template {
         val frame = grabber.frame.value
         val image =
             if (frame != null) CarIcon.Builder(IconCompat.createWithBitmap(frame)).build()
             else CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_camera_off)).build()
 
+        // A Pane allows up to two rows; the gate line uses the first. Distance takes the
+        // second when there is one, so it reads as its own line under the still rather than
+        // being crammed into the title.
         val pane = Pane.Builder()
             .setImage(image)
             .addRow(Row.Builder().setTitle(title).build())
+            .apply {
+                if (distanceText.isNotEmpty()) addRow(Row.Builder().setTitle(distanceText).build())
+            }
             .addAction(
                 Action.Builder()
                     .setTitle(label)

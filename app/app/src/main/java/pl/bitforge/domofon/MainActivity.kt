@@ -31,6 +31,8 @@ import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
+import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.geo.formatHomeDistance
 import java.io.File
 
 /**
@@ -55,6 +57,13 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
      * Started/stopped with the activity, like the MQTT connection.
      */
     private val cameraGrabber by lazy { CameraFrameGrabber(applicationContext) }
+
+    /**
+     * Live distance to the home geofence centre. applicationContext for the same reason as
+     * [cameraGrabber]. Runs only while the activity is started; it stays silent unless the
+     * geofence feature is on and located, so most installs never see it.
+     */
+    private val homeDistanceTracker by lazy { HomeDistanceTracker(applicationContext) }
 
     /** Bumped per frame so the QML Image URL changes and the view actually reloads. */
     private var frameVersion = 0
@@ -202,6 +211,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             .onEach { if (qmlReady) mainQml.cameraConfigured = it.camera.hasPicture }
             .launchIn(lifecycleScope)
 
+        // Distance to home. Empty string when the tracker has nothing, which hides the line.
+        homeDistanceTracker.distance
+            .onEach { if (qmlReady) mainQml.homeDistance = formatHomeDistance(it) }
+            .launchIn(lifecycleScope)
+
         GateNotifier.observe(this, lifecycleScope)
 
         // First run goes straight to setup — but only from onStatusChanged, once the QML
@@ -229,6 +243,9 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // Settings may have changed while we were away — including the home position or
         // the geofence toggle.
         GeofenceManager.sync(this)
+        // Re-evaluates the feature/permission guards, so enabling the geofence in Settings and
+        // coming back starts the readout without a relaunch.
+        homeDistanceTracker.start()
         maybeRequestNotifications()
     }
 
@@ -240,6 +257,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         container.removeCallbacks(qmlWatchdog)
         GateRepository.disconnect()
         cameraGrabber.stop()
+        homeDistanceTracker.stop()
         super.onStop()
     }
 
@@ -259,6 +277,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         mainQml.cameraConfigured = ConfigStore.current.camera.hasPicture
         mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
         cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }
+        mainQml.homeDistance = formatHomeDistance(homeDistanceTracker.distance.value)
 
         // QML -> Kotlin: the generated connect<Signal>Listener returns an id you can use
         // to disconnect later. The first lambda argument is the signal name.

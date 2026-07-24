@@ -34,6 +34,13 @@ Rectangle {
     // clears itself after ~20 s so it can never be read as the state of a later command.
     property string lastError: ""
 
+    // Kotlin -> QML. Current distance to the home geofence centre, already formatted
+    // ("2.3 km from home", "At home"). Empty whenever there is nothing to show — the geofence
+    // feature is off, location was not granted, or no fix has arrived yet — which hides the
+    // line. HomeDistanceTracker rides the geofence's own location grant, so this only ever
+    // appears for a user who turned that feature on.
+    property string homeDistance: ""
+
     // QML -> Kotlin. Button presses flow out to GateRepository.sendCommand().
     signal commandRequested(string action)
 
@@ -101,6 +108,18 @@ Rectangle {
             font.pixelSize: root.unit * 9
             font.bold: true
             elide: Text.ElideRight
+        }
+
+        // How far from home. Only present when HomeDistanceTracker has something — the
+        // geofence feature is on, located, and a fix is in — so the layout is unchanged for
+        // everyone who never enabled it.
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            visible: root.homeDistance !== ""
+            text: root.homeDistance
+            color: "#a6adc8"
+            font.pixelSize: root.unit * 4
         }
 
         // One status line for two independent questions, in priority order: can we reach

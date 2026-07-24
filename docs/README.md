@@ -79,6 +79,14 @@ Update this as you go — it is how future guidance sessions know where you are.
       the template code and its gating are unchanged apart from which config field they
       read.*
 - [ ] **M7** — Geofence entry triggers the gate pop-up (ch. 08)
+      <br>*2026-07-24: **distance-from-home** readout added on both surfaces — a
+      "2.3 km from home" / "At home" line under the gate state in the phone QML view, and a
+      second `PaneTemplate` row (or, camera-less, appended to the grid header) on the car.
+      New `geo/HomeDistanceTracker` pulls fused-location fixes while a surface is foreground
+      and reuses the geofence's own "Allow all the time" grant — it stays silent unless the
+      geofence feature is on and located, so no new permission or manifest change. Refresh
+      cadence is adaptive: next fix at `0.5 × ETA`, ETA from distance ÷ `max(speed, 50 km/h)`,
+      clamped 10 s‥10 min. **Untested on hardware** (phone + DHU) and on the car.*
 - [ ] **M8** — Hardened: reconnects, off-VPN behavior, battery (ch. 09)
       <br>*2026-07-23: VPN hardening landed — tri-state bridge availability (fixes the
       false "unreachable" on fresh VPN sessions, docs/10 → MQTT), 10 s connect timeouts +
