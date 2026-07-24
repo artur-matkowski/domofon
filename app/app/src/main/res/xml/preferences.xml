@@ -207,4 +207,18 @@
 
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/pref_cat_about">
+
+        <!-- Read-only build identity. Like the connection-status row above it holds no
+             value (the "about." prefix keeps it out of ConfigStore's key namespace); its
+             summary is set in code from PackageInfo, so it always matches the installed
+             APK and can never lag behind it. -->
+        <Preference
+            app:key="about.version"
+            app:title="@string/pref_version"
+            app:selectable="false"
+            app:persistent="false"/>
+
+    </PreferenceCategory>
+
 </PreferenceScreen>

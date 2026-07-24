@@ -66,6 +66,10 @@
     <string name="pref_require_unlock">Require unlock to open the gate</string>
     <string name="pref_require_unlock_summary">Notification buttons will not move the gate while the screen is locked. Strongly recommended.</string>
 
+    <!-- About -->
+    <string name="pref_cat_about">About</string>
+    <string name="pref_version">Version</string>
+
     <!-- Runtime messages -->
     <string name="not_configured_title">Not set up yet</string>
     <string name="not_configured_car">Open Domofon on your phone to set up your gate.</string>

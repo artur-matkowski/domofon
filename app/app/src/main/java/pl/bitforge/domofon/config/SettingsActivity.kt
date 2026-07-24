@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -203,6 +204,27 @@ class SettingsActivity : AppCompatActivity() {
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
             super.onViewCreated(view, savedInstanceState)
             connectionStatusRow()
+            versionRow()
+        }
+
+        /**
+         * Build identity, read from this APK's own [android.content.pm.PackageInfo] rather
+         * than a compiled-in string — so it is by definition whatever was stamped into the
+         * installed artifact and can never lag behind it. Both fields come from the manifest,
+         * which the build fills from git (see build.gradle.kts): the release script's clean
+         * semver as versionName, the commit count as versionCode. A static value, so unlike
+         * [connectionStatusRow] it needs no collector.
+         */
+        private fun versionRow() {
+            val row = findPreference<Preference>(KEY_VERSION) ?: return
+            val ctx = requireContext()
+            val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pkg.longVersionCode
+            } else {
+                @Suppress("DEPRECATION") pkg.versionCode.toLong()
+            }
+            row.summary = "${pkg.versionName} ($code)"
         }
 
         /**
@@ -312,6 +334,7 @@ class SettingsActivity : AppCompatActivity() {
 
             /** Matches the app:key in preferences.xml; holds no value, so not a ConfigStore key. */
             const val KEY_STATUS = "status.connection"
+            const val KEY_VERSION = "about.version"
         }
     }
 }
