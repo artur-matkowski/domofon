@@ -35,8 +35,8 @@ import pl.bitforge.domofon.gate.GateRepository
  *
  * With a camera configured the template is a [PaneTemplate]: the pane image is the only
  * template slot that renders a large bitmap, and [CameraFrameGrabber] feeds it a fresh
- * RTSP still every few seconds. Which template we build depends only on *configuration* —
- * never on stream health — so the type cannot flip mid-session; a dead stream degrades to
+ * still every few seconds. Which template we build depends only on *configuration* — never
+ * on fetch health — so the type cannot flip mid-session; an unreachable camera degrades to
  * the last good frame or a placeholder icon inside the same pane.
  *
  * There is deliberately **no setup here**. Play's car app quality rules (IT-1) allow a
@@ -113,9 +113,9 @@ class GateScreen(
         val error = GateRepository.lastError.value
         val heading = if (error.isEmpty()) title else "Gate — $error"
 
-        // Same gate as the phone panel: with the grabber off there is no frame coming, and
-        // the camera template would be a permanent empty placeholder on the head unit.
-        return if (ConfigStore.current.camera.isConfigured && CameraFrameGrabber.ENABLED) {
+        // Same gate as the phone panel: no snapshot URL, no frame coming, and the camera
+        // template would be a permanent empty placeholder on the head unit.
+        return if (ConfigStore.current.camera.hasPicture) {
             cameraTemplate(heading, primary.label, primary.action)
         } else {
             gridTemplate(heading, primary.label, primary.action)
@@ -139,7 +139,7 @@ class GateScreen(
             .build()
     }
 
-    /** Camera configured: pane with the latest RTSP still and the gate button beneath it. */
+    /** Camera configured: pane with the latest still and the gate button beneath it. */
     private fun cameraTemplate(title: String, label: String, action: String): Template {
         val frame = grabber.frame.value
         val image =

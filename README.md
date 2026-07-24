@@ -4,8 +4,9 @@ An entry-phone Android app for a home gate: the RTSP gate camera (video **and** 
 a QML view, gate control and live state over MQTT, an Android Auto car screen, and a
 geofence-triggered pop-up — all reachable from anywhere over OpenVPN.
 
-This repository is as much a **build guide** as it is code. The full walkthrough lives in
-[`docs/`](docs/README.md), one chapter per milestone, each ending in an acceptance test.
+This repository carries its own **design record** alongside the code: the reasoning, the
+constraints and the acceptance test for every milestone live in [`docs/`](docs/README.md),
+one chapter each. Read the chapter before changing the code it describes.
 
 ## Architecture in one paragraph
 

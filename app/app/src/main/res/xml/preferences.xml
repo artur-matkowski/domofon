@@ -163,12 +163,22 @@
 
     <PreferenceCategory app:title="@string/pref_cat_camera">
 
-        <!-- Credentials go inside the URL (rtsp://user:pass@host/…), which is why there
-             are no separate username/password fields and why the summary is supplied in
-             code: the simple provider would print the password on the list row. -->
+        <!-- Credentials go inside both URLs (scheme://user:pass@host/…), which is why there
+             are no separate username/password fields and why the summaries are supplied in
+             code: the simple provider would print the password on the list row.
+
+             RTSP first, and it is the only one anybody should need: every camera speaks it,
+             the user already has the address, and it authenticates itself. The snapshot URL
+             below overrides it for anyone with a reason — HTTP snapshot paths are
+             vendor-specific and often Digest-only, so requiring one would mean the app only
+             worked for people who know their camera's firmware. See docs/04 §1. -->
         <EditTextPreference
             app:key="camera.rtspUrl"
             app:title="@string/pref_rtsp_url"/>
+
+        <EditTextPreference
+            app:key="camera.snapshotUrl"
+            app:title="@string/pref_snapshot_url"/>
 
         <EditTextPreference
             app:key="camera.snapshotSecs"

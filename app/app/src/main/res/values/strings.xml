@@ -51,8 +51,10 @@
 
     <!-- Camera -->
     <string name="pref_cat_camera">Camera</string>
-    <string name="pref_rtsp_url">RTSP URL</string>
-    <string name="pref_rtsp_url_summary">Stream from your gate camera, e.g. rtsp://user:password@camera-address/path</string>
+    <string name="pref_rtsp_url">Camera address (RTSP)</string>
+    <string name="pref_rtsp_url_summary">rtsp://user:password@camera-address/path — the same address your video player uses. The picture on the phone and the car screen comes from here. Tip: the camera\'s substream saves a lot of data over the VPN.</string>
+    <string name="pref_snapshot_url">Snapshot URL (optional)</string>
+    <string name="pref_snapshot_url_summary">Leave empty unless you have a reason. An HTTP address returning one JPEG (go2rtc, Frigate, or the camera\'s own snapshot path) — takes the picture from there instead of the stream.</string>
     <string name="pref_snapshot_secs">Snapshot interval (seconds)</string>
     <string name="pref_snapshot_secs_summary">How often a fresh still is pulled from the camera, on the phone and the car screen. Default 10. Lower is more current at a higher data cost over the VPN.</string>
 

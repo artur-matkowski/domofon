@@ -1,21 +1,22 @@
-# Domofon — Build Guide
+# Domofon — Design Record
 
-A step-by-step guide for building the **Domofon** entry-phone Android app yourself:
-RTSP gate camera (video + audio) in a QML view, gate control and live state over MQTT,
-Android Auto integration, and a geofence-triggered pop-up — all reachable from anywhere
-through OpenVPN.
+The design, the reasoning and the acceptance tests behind the **Domofon** entry-phone
+Android app: RTSP gate camera (video + audio) in a QML view, gate control and live state
+over MQTT, Android Auto integration, and a geofence-triggered pop-up — all reachable from
+anywhere through OpenVPN.
 
-## How to use this guide
+## How to use these chapters
 
 1. Read [00-architecture.md](00-architecture.md) first — it explains every component and
    **why** it is designed this way (including two hard Android Auto constraints).
-2. Work through the chapters in order. Each chapter ends with an **acceptance test** —
-   do not move on until it passes. The chapters map 1:1 to the milestones in
-   [../MILESTONES.md](../MILESTONES.md).
-3. When something breaks, check [10-troubleshooting.md](10-troubleshooting.md) first,
-   then ask Claude in a session inside this repo — the project context (CLAUDE.md,
-   these docs, your progress below) is picked up automatically. Resolved problems get
-   appended to the troubleshooting chapter so they are never solved twice.
+2. Each chapter ends with an **acceptance test**, and the chapters map 1:1 to the
+   milestones in [../MILESTONES.md](../MILESTONES.md). A milestone is not ticked until
+   its test has passed *on the hardware*, which is the one thing Claude cannot do.
+3. Read the chapter before changing the code it describes: several of them record a
+   constraint that is not visible in the code itself.
+4. When something breaks, check [10-troubleshooting.md](10-troubleshooting.md) first.
+   Resolved problems get appended there (Symptom → Cause → Fix) so they are never solved
+   twice — several entries below cost a whole session each.
 
 ## Chapters
 
@@ -46,16 +47,29 @@ Update this as you go — it is how future guidance sessions know where you are.
 - [ ] **M2** — Kotlin app shows embedded QML view on the phone (ch. 03)
       <br>*`app/` scaffolded and compiling; property/signal round-trip unverified on device.*
 - [ ] **M3** — RTSP video + audio playing in the app over VPN (ch. 04)
-      <br>*2026-07-23: interim **phone-side snapshot** added — the phone QML view now shows
-      the same RTSP still as the head unit, reusing `CameraFrameGrabber` (a Bitmap can't
-      cross the QtQuickView bridge, so frames pass as a cache `file://` URL). Not full M3
-      video/audio; that remains to write. New `camera.snapshotSecs` setting makes the
-      snapshot interval configurable (was a hardcoded 10 s) for both the phone and the car.
-      **2026-07-23, tested on device: the RTSP snapshot is switched OFF.** Reading
+      <br>*2026-07-23: interim **phone-side snapshot** added — the phone QML view shows the
+      same still as the head unit (a Bitmap can't cross the QtQuickView bridge, so frames
+      pass as a cache `file://` URL), and `camera.snapshotSecs` made the interval
+      configurable for both. Then, tested on device: **switched OFF**, because reading
       `Image.getPlanes()` on ExoPlayer's decoder output is a native JNI abort on Exynos
-      (Samsung SM-G990B2) — it killed the app ~3 s after every launch. See ch. 10; the
-      replacement is an HTTP JPEG snapshot, and `CameraFrameGrabber.ENABLED` re-enables
-      everything downstream in one line once frames come from somewhere safe.*
+      (Samsung SM-G990B2) that killed the app ~3 s after every launch.*
+      <br>*2026-07-24, morning: rebuilt as an HTTP GET returning a JPEG. It worked, but the
+      probe against the real camera settled the design question the other way — the gate
+      camera answers snapshots only at a Hikvision-specific path and only with Digest auth,
+      so an app that needed one would only ever work for people who know their camera's
+      firmware. **Artur's call: RTSP is the one address the app may require.** A backend or a
+      brand table makes it a private tool, not publishable software.*
+      <br>*2026-07-24, afternoon: **stills come from the RTSP stream again, safely this
+      time.** `OffscreenTextureReader` gives the decoder a `SurfaceTexture` on an offscreen
+      EGL context and reads pixels back with `glReadPixels` — GPU-only buffers are fine when
+      the GPU does the reading, and the scale to 640 px happens free in the draw. media3 is
+      back (release APK 59.4 MB). `CameraFrameGrabber` is now just the contract and picks
+      between `RtspFrameSource` (default) and `HttpFrameSource` (optional override, still
+      there for go2rtc/Frigate). Settings leads with the camera's RTSP address; the snapshot
+      URL is marked optional. Both builds pass; **nothing has run on the phone, the DHU or
+      the car yet** — and the GL path has two failure modes to look for first: an upside-down
+      picture, or a green strip down one edge (ch. 10). Full M3 (live video + audio) remains
+      unwritten; ch. 04 §2 notes audio is unaffected by the crash that shaped all of this.*
 - [ ] **M4** — Gate control + live state working in the phone UI (ch. 05)
       <br>*2026-07-23: MQTT connectivity is now **verified on a real device against the real
       broker**, in an R8 release build. `GateRepository` exposes a real `ConnectionState`
@@ -84,10 +98,12 @@ Update this as you go — it is how future guidance sessions know where you are.
       apply to Car App Library apps, so the car needs a Play trusted-source install (Internal
       App Sharing / Internal Test Track) + a Play Console account — ch. 07 §4. Not ticked
       until it shows on the Passat.*
-      <br>*2026-07-23: head-unit **camera snapshot** added (`CameraFrameGrabber`, media3
-      RTSP → still image in a `PaneTemplate` when a camera URL is configured; grid as
-      before without one). Untested on DHU and car. Also fixed the phone-UI mis-scale
-      after real-car disconnect (`configChanges` on MainActivity — see docs/10).*
+      <br>*2026-07-23: head-unit **camera snapshot** added — still image in a `PaneTemplate`
+      when a camera URL is configured; grid as before without one. Untested on DHU and car.
+      Also fixed the phone-UI mis-scale after real-car disconnect (`configChanges` on
+      MainActivity — see docs/10). The frame source was replaced on 2026-07-24 (see M3);
+      the template code and its gating are unchanged apart from which config field they
+      read.*
 - [ ] **M7** — Geofence entry triggers the gate pop-up (ch. 08)
 - [ ] **M8** — Hardened: reconnects, off-VPN behavior, battery (ch. 09)
       <br>*2026-07-23: VPN hardening landed — tri-state bridge availability (fixes the

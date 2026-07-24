@@ -1,30 +1,18 @@
 # Domofon — project context
 
-Entry-phone Android app for Artur's home gate. **Artur writes the code himself,
-following the guide in `docs/`; Claude's job is guidance and troubleshooting, not
-implementing the app.** When a session solves a problem, append it to
+Entry-phone Android app for Artur's home gate. **Claude writes the code. Artur reviews it
+and is the only one who can test on real hardware** — the phone, the DHU, the Passat.
+Nothing is "done" until it has run on a device; say plainly what is untested rather than
+implying it works. When a session solves a problem, append it to
 `docs/10-troubleshooting.md` (Symptom → Cause → Fix) and update the progress tracker
 checkboxes in `docs/README.md`.
 
-> **One-off exception, 2026-07-10.** Artur explicitly asked Claude to bootstrap the repo:
-> `bridge/` scaffold and the `app/` hello-world for all three UI pipes (phone QML,
-> Android Auto app, Android Auto pop-up). That override covered the scaffold only. From
-> M3 (RTSP) onward the rule above applies again — do not start writing app code because
-> this scaffold exists.
->
-> **Second exception, 2026-07-23.** Artur got a Play Console account and asked Claude to
-> scan and refactor the app for publication. That override covered the security pass and
-> the configuration extraction in ch. 11 — `config/`, the settings screen, the host
-> validator, R8/signing, and the correctness bugs found alongside them. It did **not**
-> extend to milestone feature work. M3 (RTSP) onward remains Artur's to write.
->
-> **Third exception, 2026-07-23.** After real-car testing surfaced issues, Artur asked
-> Claude to implement the fixes: per-topic-class QoS + keep-alive settings, the
-> tri-state bridge availability (false "unreachable" over VPN), connect-timeout
-> hardening, the `configChanges` fix for the post-Android-Auto phone-UI mis-scale, and
-> the new head-unit camera snapshot (`camera/CameraFrameGrabber` + `PaneTemplate`).
-> That is the full extent — phone-side RTSP playback (M3) and everything after remain
-> Artur's to write.
+> **Changed 2026-07-24.** This replaces the original "Artur writes the code, Claude
+> guides" model, which had already been suspended by three separate one-off exceptions
+> (the repo bootstrap, the Play-publication security pass, the post-real-car fixes) in
+> two weeks. Those exception notes are gone; there is no longer a rule for them to carve
+> holes in. The `docs/` chapters are now the design record and the acceptance tests —
+> not a type-it-yourself tutorial.
 
 ## Where things stand
 
@@ -57,8 +45,19 @@ home via **OpenVPN for Android** (always-on, per-app).
   use case in August 2026. Use `connectedDevice` (it is keeping a network connection to an
   external device alive, which is what that type is for).
 - **Nothing deployment-specific may be compiled in.** Broker, topics, home coordinates and
-  the RTSP URL live in `ConfigStore` (ch. 11). A published APK is a public artifact;
+  both camera URLs live in `ConfigStore` (ch. 11). A published APK is a public artifact;
   `strings` on it is not a difficult attack. `BuildConfig` carries no app configuration.
+- **The camera is one RTSP URL and nothing else.** No snapshot endpoint, no restreamer, no
+  vendor path required — those are per-camera and often Digest-only, and an app that needs
+  them only works for people who know their own firmware. Stills are pulled out of the
+  stream (`RtspFrameSource`); an HTTP JPEG URL exists as an *optional* override, never a
+  requirement. Artur's rule, 2026-07-24: if it needs a backend or knows a camera brand, it
+  is a private tool rather than a publishable app.
+- **Decoded video frames are never read on the CPU.** `ImageReader` + `Image.getPlanes()`
+  is a native JNI abort on a GPU-only MediaCodec buffer — uncatchable, and fatal on the
+  test phone (Exynos). Frames come back through an offscreen EGL context and `glReadPixels`
+  (`OffscreenTextureReader`), which is safe on those buffers and scales on the GPU for free.
+  See ch. 04 §1 and the `nativeCreatePlanes` entry in ch. 10.
 - `HostValidator.ALLOW_ALL_HOSTS_VALIDATOR` is debug-only, permanently. `CarAppService` is
   exported and unguarded by permission, so the validator is the entire boundary between an
   arbitrary installed app and the gate opening.

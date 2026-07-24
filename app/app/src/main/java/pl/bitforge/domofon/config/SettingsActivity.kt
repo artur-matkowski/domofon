@@ -184,7 +184,8 @@ class SettingsActivity : AppCompatActivity() {
 
             masked(ConfigStore.K_PASS)
 
-            rtspUrl(ConfigStore.K_RTSP_URL)
+            credentialUrl(ConfigStore.K_SNAPSHOT_URL, R.string.pref_snapshot_url_summary)
+            credentialUrl(ConfigStore.K_RTSP_URL, R.string.pref_rtsp_url_summary)
 
             // Switching the geofence on is the user asking for the feature — and the only
             // moment at which asking for background location is justified.
@@ -266,19 +267,22 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         /**
-         * The RTSP URL carries the camera credentials inline (rtsp://user:pass@host/…), so
-         * it gets URI input while typing but a summary that strips the userinfo — the row
+         * Both camera URLs carry the credentials inline (`scheme://user:pass@host/…`), so
+         * they get URI input while typing but a summary that strips the userinfo — the row
          * must not print the password, same as [masked] fields. Fully masking the input
          * would make a long URL uneditable, and the value is Keystore-encrypted at rest
          * like the passwords are (see ConfigStore.SECRET_KEYS).
+         *
+         * @param emptySummary what to say when nothing is set — the example URL, which is
+         *   the only hint the user gets about what shape of address this field wants.
          */
-        private fun rtspUrl(key: String) {
+        private fun credentialUrl(key: String, emptySummary: Int) {
             val pref = edit(key) ?: return
             pref.setOnBindEditTextListener {
                 it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             }
             pref.summaryProvider = Preference.SummaryProvider<EditTextPreference> {
-                if (it.text.isNullOrBlank()) getString(R.string.pref_rtsp_url_summary)
+                if (it.text.isNullOrBlank()) getString(emptySummary)
                 else it.text!!.replace(USERINFO, "//")
             }
         }

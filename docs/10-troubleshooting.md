@@ -499,13 +499,14 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   metadata + `automotive_app_desc.xml`; no `uses-feature` at all. Rebuild
   `bundleRelease`, re-upload.
 
-- **Symptom** (preemptive): bumping `androidx.media3` (the head-unit snapshot's RTSP
-  stack) past 1.10.x fails the AAR metadata check with *"requires minCompileSdk 37"*.
+- **Symptom** (preemptive; **dormant since 2026-07-24** — media3 is no longer a dependency,
+  so this only bites again if audio playback brings it back): bumping `androidx.media3`
+  past 1.10.x fails the AAR metadata check with *"requires minCompileSdk 37"*.
   **Cause**: media3 1.10.1 already declares `minCompileSdk=36` — exactly this project's
-  `compileSdk`; the next minor will move past it. Same trap as core-ktx 1.19.0.
-  **Fix**: stay on 1.10.x until `compileSdk` moves. And remember media3-rtsp is a new
-  reflective surface under R8 — re-test RTSP snapshots in a **release** build after any
-  media3 or R8 change; debug proving nothing still holds.
+  `compileSdk`; the next minor moves past it. Same trap as core-ktx 1.19.0.
+  **Fix**: stay on 1.10.x until `compileSdk` moves. And remember media3 is a fresh
+  reflective surface under R8 — re-test in a **release** build after any media3 or R8
+  change; debug proving nothing still holds.
 
 - **Symptom**: the phone shows `Gate: unknown` with no error and the app looks like it
   never reaches the broker — while `mosquitto_sub -h <host> -u <user> -P <pass> -t
@@ -570,11 +571,50 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   `HardwareBuffer.USAGE_CPU_READ_OFTEN` to `ImageReader.newInstance` does **not** fix it,
   and `Image.getHardwareBuffer()` returns nothing useful, so the condition cannot even be
   probed for before the fatal read.
-  **Fix**: `CameraFrameGrabber.ENABLED` is `false`. The phone panel and the car template
-  both gate on it, so the UI falls back to exactly the pre-camera layout. Re-enabling
-  needs frames from somewhere that is not the video decoder — an HTTP JPEG snapshot
-  (go2rtc's `/api/frame.jpeg`, or the camera's own snapshot endpoint) is the intended
-  replacement and is far less code than the decoder path it replaces.
+  **Fix** (2026-07-24, **resolved**): the `ImageReader` is gone, not the decoder.
+  `OffscreenTextureReader` gives the player a `SurfaceTexture` on an offscreen EGL context,
+  draws that external texture into an FBO sized to the target, and `glReadPixels` back into
+  a `Bitmap`. Reading a GPU-only buffer *with the GPU* is exactly what it is for, and the
+  scaling comes free in the draw. The `ENABLED` flag is gone too — there is nothing left to
+  switch off. See ch. 04 §1.1.
+  **The rule this leaves behind**: never read decoded video frames on the CPU — no
+  `ImageReader`, no `getPlanes()`. GL readback, or nothing. Live *playback* was never
+  affected, so audio may use a player freely.
+  **Two ways the GL path goes wrong**, both visible at a glance rather than as a crash: a
+  picture that is upside down (swap the V values in `OffscreenTextureReader.TEX_COORDS`),
+  and a green strip down one edge (the `SurfaceTexture` transform matrix is being ignored,
+  so the decoder's macroblock padding is being sampled).
+
+- **Symptom**: the snapshot URL returns a picture instantly with `curl` from the laptop,
+  and the app shows "Camera unreachable" forever. `adb logcat -s Domofon:W` says
+  `camera: snapshot fetch failed (UnknownServiceException)`, and unfiltered logcat has
+  `CLEARTEXT communication to 192.168.x.x not permitted by network security policy`.
+  **Cause**: Android blocks cleartext HTTP by default from API 28 on. Nothing in this app
+  had ever tripped it — MQTT is a raw socket the platform does not inspect as HTTP, and
+  RTSP is not HTTP either — so the camera snapshot was the first request to meet the
+  policy.
+  **Fix**: `res/xml/network_security_config.xml` (`cleartextTrafficPermitted="true"`),
+  referenced by `android:networkSecurityConfig` on `<application>`. It cannot be scoped to
+  a host list: every address in this app is typed by the user at runtime, by design. If the
+  camera ever gets a certificate, just use `https://` in the setting — the config permits
+  cleartext, it does not require it.
+
+- **Symptom**: the snapshot never appears; logcat says *"the snapshot endpoint requires
+  Digest auth, which this client does not speak"*.
+  **Cause**: exactly what it says. `HttpURLConnection` implements Basic only, and most
+  Hikvision/Dahua firmware insists on Digest. The credentials are correct; the picture is
+  still never coming.
+  **Fix**: put go2rtc in front of the camera and point the setting at
+  `http://<host>:1984/api/frame.jpeg?src=gate`. It handles the camera's auth and quirks,
+  and it is the same component that would later transcode the audio. (Implementing Digest
+  in the app is ~60 lines and was deliberately not done — go2rtc solves more problems.)
+
+- **Symptom**: the snapshot shows an old picture and the status says unreachable, but the
+  camera is fine.
+  **Cause**: by design. A failed fetch keeps the last good frame — a gate picture from
+  thirty seconds ago beats a grey placeholder — and retries on a fixed 30 s backoff that is
+  independent of the configured interval. So a camera that recovers can take up to 30 s to
+  show it, no matter how low *Snapshot interval* is set.
 
 ## Backlog / future ideas
 
@@ -587,10 +627,12 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   gate. The host validator is the real control, but a confirmation template would mean a
   misconfigured validator is no longer sufficient on its own.
 - **`res/raw/keep.xml`** so resource shrinking can be turned back on.
-- **Replace the RTSP frame grab with an HTTP JPEG snapshot** and flip
-  `CameraFrameGrabber.ENABLED` back on. The decoder path is a dead end on at least one
-  real device (see the `nativeCreatePlanes` entry above); a `GET` returning a JPEG needs
-  no `ImageReader`, no ExoPlayer, no media3 dependency and no R8 keep rules, and works
-  identically on the phone and the head unit. Needs one new setting (snapshot URL) and
-  should reuse the existing `SECRET_KEYS` encryption, since the URL carries credentials
-  inline exactly like the RTSP one does.
+- **Live audio from the gate camera** (ch. 04 §2). Media3 with the *video* track disabled
+  — the mirror of what `RtspFrameSource` does — which works on the phone and during an
+  Android Auto session, since it lives in Kotlin rather than QML. Two things to settle when
+  it is picked up: AudioFocus (an intercom must duck navigation, not fight it) and whether
+  the camera's codec needs a go2rtc transcode (G.711 is common and ExoPlayer will not play it).
+- ~~Replace the RTSP frame grab with an HTTP JPEG snapshot~~ — **superseded 2026-07-24.** It
+  was built and it worked, but it made the app camera-brand-dependent; the frame grab came
+  back on a safe (GL) footing instead, and the HTTP path stayed as an optional override.
+  See the `nativeCreatePlanes` entry above.

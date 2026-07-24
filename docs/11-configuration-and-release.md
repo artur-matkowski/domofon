@@ -42,7 +42,7 @@ unzip -p app/build/outputs/apk/release/app-release-unsigned.apk \
 |---|---|
 | `DomofonConfig.kt` | Immutable snapshot: `Broker`, `Topics`, `Home`, `Camera`. `isComplete` gates every entry point. |
 | `ConfigStore.kt` | `SharedPreferences`-backed singleton. Exposes `config: StateFlow` and a synchronous `current`. Also *is* the `PreferenceDataStore` behind the settings screen. |
-| `SecretStore.kt` | AES-256/GCM via the Android Keystore, for the broker and RTSP passwords. |
+| `SecretStore.kt` | AES-256/GCM via the Android Keystore, for the broker password and both camera URLs (each carries its credentials inline). |
 | `SettingsActivity.kt` | `PreferenceFragmentCompat` over `res/xml/preferences.xml`. |
 
 **Why `SharedPreferences` and not DataStore.** Every consumer is either a
@@ -119,8 +119,8 @@ when you last opened the app. `disconnect()` now resets the state, and the metho
 
 ## 3a. Accepted residual risks
 
-Two holes are knowingly left open, because closing them would cost the feature they
-protect. Both are recorded here so a future session does not "discover" them and quietly
+Three holes are knowingly left open, because closing them would cost the feature they
+protect. All are recorded here so a future session does not "discover" them and quietly
 break the product to fix them.
 
 **A notification listener can fire the gate command.** The heads-up notification carries a
@@ -140,6 +140,23 @@ instead of carrying the command. That deletes the one-tap-from-Maps behaviour th
 M6 exist to deliver. **Decision (Artur, 2026-07-23): keep one-tap, accept the residual.**
 It requires the user to have installed something malicious *and* granted it notification
 access.
+
+**Cleartext HTTP is permitted app-wide** (`res/xml/network_security_config.xml`,
+2026-07-24), for the *optional* HTTP snapshot override only. API 28+ blocks cleartext by
+default, and the block cannot be lifted for a host list because **every address in this app
+is typed by the user at runtime** — which is the whole point of §1. So it is lifted globally.
+
+*What is actually exposed:* nothing, on a default install. The camera's own path is RTSP,
+which is a raw socket this policy never governed, and the snapshot field is empty unless the
+user deliberately fills it. When they do: one GET per interval to an address they chose,
+with credentials they typed, normally inside their own VPN. Gate **commands** never travel
+this way — they are MQTT, with its own TLS switch — so the thing worth protecting is not on
+this path at all.
+
+*Why not closed:* the alternatives are worse. Requiring `https://` would exclude essentially
+every consumer IP camera and most homelab restreamers, making the override useless; a pinned
+host list would put a deployment address back in the APK, undoing §1. The config permits
+cleartext, it does not require it — an `https://` URL works unchanged.
 
 **One binder-level click on the car screen moves the gate.** `GridItem`'s click listener
 sends the command with no confirmation step, so a validator misconfiguration is

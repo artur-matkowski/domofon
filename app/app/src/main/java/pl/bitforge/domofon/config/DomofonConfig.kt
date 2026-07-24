@@ -125,20 +125,40 @@ data class DomofonConfig(
             "Home(enabled=$enabled, set=${latitude != null && longitude != null}, r=$radiusMeters)"
     }
 
+    /**
+     * The camera, as one URL the user already has plus an optional escape hatch.
+     *
+     * [rtspUrl] is the real setting: every camera speaks RTSP, the user owns that address
+     * for their own player, and it carries its own auth. Stills are pulled out of it — see
+     * [pl.bitforge.domofon.camera.RtspFrameSource]. [snapshotUrl] overrides that with an
+     * HTTP JPEG endpoint for anyone who has a reason (go2rtc, Frigate, bandwidth), and is
+     * deliberately *not* required: snapshot paths are vendor-specific and often Digest-only,
+     * so an app that needed one would only work for people who know their camera's firmware.
+     */
     data class Camera(
-        /** Carries the camera credentials inline: rtsp://user:pass@host/… */
+        /** Optional HTTP(S) endpoint returning a JPEG still. May carry credentials inline. */
+        val snapshotUrl: String,
+        /** The camera address. Carries the credentials inline: `rtsp://user:pass@host/…` */
         val rtspUrl: String,
         /**
          * Seconds between snapshots the [pl.bitforge.domofon.camera.CameraFrameGrabber]
-         * emits. Governs both the phone view's refresh and the car screen's redraw cadence.
+         * fetches. Governs both the phone view's refresh and the car screen's redraw cadence.
          * Clamped in [ConfigStore.read].
          */
         val snapshotSecs: Int,
     ) {
-        val isConfigured: Boolean get() = rtspUrl.isNotBlank()
+        /** An HTTP snapshot endpoint is configured, and overrides the stream as the source. */
+        val hasSnapshot: Boolean get() = snapshotUrl.isNotBlank()
 
-        /** Same reasoning as [Broker.toString] — the URL embeds the credentials. */
-        override fun toString(): String = "Camera(configured=$isConfigured, snapshotSecs=$snapshotSecs)"
+        /** A stream is configured — the normal case, and the source of stills by default. */
+        val hasStream: Boolean get() = rtspUrl.isNotBlank()
+
+        /** Whether the phone panel and the car's camera pane have anything to show at all. */
+        val hasPicture: Boolean get() = hasSnapshot || hasStream
+
+        /** Same reasoning as [Broker.toString] — both URLs embed the credentials. */
+        override fun toString(): String =
+            "Camera(snapshot=$hasSnapshot, stream=$hasStream, snapshotSecs=$snapshotSecs)"
     }
 
     companion object {
@@ -167,7 +187,7 @@ data class DomofonConfig(
                 keepAliveSeconds = Defaults.KEEP_ALIVE_S,
             ),
             home = Home(enabled = false, latitude = null, longitude = null, radiusMeters = Defaults.RADIUS_M),
-            camera = Camera(rtspUrl = "", snapshotSecs = Defaults.SNAPSHOT_SECS),
+            camera = Camera(snapshotUrl = "", rtspUrl = "", snapshotSecs = Defaults.SNAPSHOT_SECS),
             requireUnlockForCommands = true,
         )
     }

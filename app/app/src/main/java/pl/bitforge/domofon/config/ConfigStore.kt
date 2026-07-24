@@ -53,17 +53,18 @@ object ConfigStore : PreferenceDataStore() {
     const val K_LON = "home.longitude"
     const val K_RADIUS = "home.radiusMeters"
 
+    const val K_SNAPSHOT_URL = "camera.snapshotUrl"
     const val K_RTSP_URL = "camera.rtspUrl"
     const val K_SNAPSHOT_SECS = "camera.snapshotSecs"
 
     const val K_REQUIRE_UNLOCK = "security.requireUnlock"
 
     /**
-     * Keys whose values are Keystore-encrypted at rest. The RTSP URL is here because it
-     * carries the camera credentials inline (rtsp://user:pass@host/…) — there are no
-     * separate username/password fields for it.
+     * Keys whose values are Keystore-encrypted at rest. Both camera URLs are here because
+     * they carry the camera credentials inline (`rtsp://user:pass@host/…`) — there are no
+     * separate username/password fields for either.
      */
-    private val SECRET_KEYS = setOf(K_PASS, K_RTSP_URL)
+    private val SECRET_KEYS = setOf(K_PASS, K_SNAPSHOT_URL, K_RTSP_URL)
 
     private lateinit var prefs: SharedPreferences
 
@@ -145,6 +146,7 @@ object ConfigStore : PreferenceDataStore() {
                 radiusMeters = str(K_RADIUS, "").toFloatOrNull() ?: DomofonConfig.Defaults.RADIUS_M,
             ),
             camera = DomofonConfig.Camera(
+                snapshotUrl = secret(K_SNAPSHOT_URL).trim(),
                 rtspUrl = secret(K_RTSP_URL).trim(),
                 // Clamped here for the same reason as the mqtt fields: a hand-edited 0 would
                 // busy-loop the grabber, and a huge value is harmless but pointless.

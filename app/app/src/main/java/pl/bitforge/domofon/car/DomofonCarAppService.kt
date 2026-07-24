@@ -44,8 +44,8 @@ class DomofonCarAppService : CarAppService() {
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent): Screen {
             // The session owns the frame grabber the way it owns its MQTT slot. START/STOP
-            // rather than create/destroy: a backgrounded car app must not keep pulling
-            // RTSP video over the VPN for a screen nobody is looking at.
+            // rather than create/destroy: a backgrounded car app must not keep fetching
+            // stills over the VPN for a screen nobody is looking at.
             val grabber = CameraFrameGrabber(carContext)
 
             // Observer first, then connect. Registering afterwards leaks an owner slot for

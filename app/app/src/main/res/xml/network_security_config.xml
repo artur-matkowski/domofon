@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP, permitted deliberately.
+
+  Since API 28 the platform blocks cleartext by default, and it had never come up in this
+  app: MQTT is a raw socket (the platform cannot see it as HTTP) and RTSP is not HTTP
+  either. The camera snapshot is the first real HTTP request the app makes, and it goes to
+  a homelab camera at something like http://192.168.1.60/snapshot.jpg. Without this the
+  fetch fails with "CLEARTEXT communication to <host> not permitted" while the exact same
+  URL works in curl on the laptop — see docs/10.
+
+  This cannot be scoped to a domain list. Every address in this app is typed by the user at
+  runtime; there is no compile-time host to allowlist, by deliberate design (a published APK
+  that knows a gate's address is a liability — see CLAUDE.md). The exposure is bounded by
+  what the app actually sends over HTTP: one GET to a user-supplied camera address, with
+  credentials the same user typed, over a VPN they control. Gate commands do not travel this
+  way — they are MQTT, and TLS for those is a separate switch in Settings.
+
+  If the camera ever gets a certificate, prefer https:// in the snapshot URL: this file
+  permits cleartext, it does not require it.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true"/>
+</network-security-config>

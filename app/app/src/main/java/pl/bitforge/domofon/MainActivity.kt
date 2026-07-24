@@ -50,9 +50,9 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private lateinit var container: FrameLayout
 
     /**
-     * Pulls camera stills over RTSP. applicationContext, not `this`: it is held for the
-     * activity's whole life and outlives configuration changes, so an activity context here
-     * would leak. Started/stopped with the activity, like the MQTT connection.
+     * Produces camera stills. applicationContext, not `this`: it is held for the activity's
+     * whole life and outlives configuration changes, so an activity context here would leak.
+     * Started/stopped with the activity, like the MQTT connection.
      */
     private val cameraGrabber by lazy { CameraFrameGrabber(applicationContext) }
 
@@ -196,10 +196,10 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             .onEach { if (qmlReady) mainQml.cameraStatus = it.name.lowercase() }
             .launchIn(lifecycleScope)
 
-        // Whether a camera URL is set at all decides if the QML panel appears. Driven off
-        // config so toggling the URL in Settings shows/hides it without a relaunch.
+        // Whether a camera is configured at all decides if the QML panel appears. Driven off
+        // config so entering the URL in Settings shows the panel without a relaunch.
         ConfigStore.config
-            .onEach { if (qmlReady) mainQml.cameraConfigured = cameraPanelVisible(it.camera.isConfigured) }
+            .onEach { if (qmlReady) mainQml.cameraConfigured = it.camera.hasPicture }
             .launchIn(lifecycleScope)
 
         GateNotifier.observe(this, lifecycleScope)
@@ -256,7 +256,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         mainQml.connectionStatus = GateRepository.connection.value.status.name.lowercase()
         mainQml.connectionReason = GateRepository.connection.value.reason
         mainQml.lastError = GateRepository.lastError.value
-        mainQml.cameraConfigured = cameraPanelVisible(ConfigStore.current.camera.isConfigured)
+        mainQml.cameraConfigured = ConfigStore.current.camera.hasPicture
         mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
         cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }
 
@@ -294,14 +294,6 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
         return "file://${file.absolutePath}?v=${++frameVersion}"
     }
-
-    /**
-     * A configured RTSP URL is not enough to show the panel while the grabber is switched
-     * off — it would sit on "Connecting…" forever, waiting for a frame nothing will send.
-     * With this false the QML Column collapses the panel and the layout is exactly what it
-     * was before the camera existed. See [CameraFrameGrabber.ENABLED].
-     */
-    private fun cameraPanelVisible(configured: Boolean) = configured && CameraFrameGrabber.ENABLED
 
     /**
      * Shown when the process cannot host Qt and a restart was already attempted moments ago
