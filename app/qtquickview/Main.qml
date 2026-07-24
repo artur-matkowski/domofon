@@ -7,12 +7,12 @@ Rectangle {
     id: root
     color: "#1e1e2e"
 
-    // Kotlin -> QML. GateRepository pushes state in. bridgeStatus is one of
-    // "online" / "offline" / "unknown" — mirroring GateRepository.BridgeStatus. "unknown"
-    // is the normal state of a fresh connection, not an error, so only "offline" (the
-    // bridge's own LWT) gets the red banner.
-    property string gateState: "unknown"
-    property string bridgeStatus: "unknown"
+    // Kotlin -> QML. The single gate/connection status line, already composed by the backend
+    // (GateRepository, via gateStatusLine) so the phone and the Android Auto screen word it
+    // identically — e.g. "Gate — opened", "Gate — waiting for the service", "Gate — connecting…".
+    // Empty hides the line. The raw fields it is derived from no longer cross the bridge: the
+    // wording lives in one place so the two frontends can never disagree.
+    property string statusText: ""
 
     // Kotlin -> QML. The camera snapshot. cameraFrame is a file:// URL to the latest still
     // (a Bitmap can't cross the QtQuickView bridge), refreshed with a changing ?v= query.
@@ -22,20 +22,13 @@ Rectangle {
     property string cameraStatus: "idle"
     property bool cameraConfigured: false
 
-    // Kotlin -> QML. Our own broker connection, mirroring GateRepository.ConnectionStatus:
-    // disconnected | connecting | connected | degraded | failed. connectionReason carries a
-    // user-facing explanation on failed/degraded and is empty otherwise. Separate from
-    // bridgeStatus, which is about the gate service rather than about our socket.
-    property string connectionStatus: "disconnected"
-    property string connectionReason: ""
-
     // Kotlin -> QML. Why the last command did not reach the gate — either the bridge refused
     // it (hc12/error) or it never left the phone. Empty when there is nothing to report; it
     // clears itself after ~20 s so it can never be read as the state of a later command.
     property string lastError: ""
 
     // Kotlin -> QML. Current distance to the home geofence centre, already formatted
-    // ("2.3 km from home", "At home"). Empty whenever there is nothing to show — the geofence
+    // ("1.5 km · approaching home", "120 m · at home"). Empty whenever there is nothing to show — the geofence
     // feature is off, location was not granted, or no fix has arrived yet — which hides the
     // line. HomeDistanceTracker rides the geofence's own location grant, so this only ever
     // appears for a user who turned that feature on.
@@ -103,11 +96,12 @@ Rectangle {
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "Gate: " + root.gateState
+            visible: root.statusText !== ""
+            text: root.statusText
             color: "white"
             font.pixelSize: root.unit * 9
             font.bold: true
-            elide: Text.ElideRight
+            wrapMode: Text.WordWrap
         }
 
         // How far from home. Only present when HomeDistanceTracker has something — the
@@ -120,62 +114,6 @@ Rectangle {
             text: root.homeDistance
             color: "#a6adc8"
             font.pixelSize: root.unit * 4
-        }
-
-        // One status line for two independent questions, in priority order: can we reach
-        // the broker at all, and if so what does the broker say about the gate service?
-        //
-        // Before this existed the answer to the first question was never rendered anywhere.
-        // A rejected password, a broker holding no retained state and a healthy connection
-        // were the same screen — "Gate: unknown", silence — which is what sent a working
-        // connection to the troubleshooting docs.
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-
-            readonly property bool connected: root.connectionStatus === "connected"
-                                              || root.connectionStatus === "degraded"
-
-            // hc12/available said offline: the state above is the last thing we heard, not
-            // necessarily the truth. Saying so beats showing a stale label as fact.
-            // "unknown" deliberately shows nothing — before the tri-state, a fresh VPN
-            // session wore this banner permanently just because no birth message arrived.
-            readonly property bool bridgeDown: connected && root.bridgeStatus === "offline"
-
-            // Muted grey for "this is fine, just letting you know"; red only for something
-            // the user may need to act on.
-            readonly property bool informational: root.connectionStatus === "connecting"
-                                                  || (connected && !bridgeDown
-                                                      && root.connectionStatus !== "degraded")
-
-            visible: text !== ""
-            text: {
-                if (root.connectionStatus === "connecting")
-                    return "Connecting to the broker…"
-                if (root.connectionStatus === "failed")
-                    return root.connectionReason !== "" ? root.connectionReason
-                                                        : "Cannot reach the broker"
-                if (bridgeDown)
-                    return "Gate system unreachable"
-                if (root.connectionStatus === "degraded")
-                    return root.connectionReason
-                // Our socket is up but the gate service has not said "online". Normal for
-                // the first moment of a session; if it persists, the bridge is not on the
-                // broker and no button will ever do anything — which is a completely
-                // different problem from the line below, and used to render identically.
-                if (connected && root.bridgeStatus === "unknown")
-                    return "Connected — waiting for the gate service"
-                if (connected && root.gateState === "unknown")
-                    // Connected, subscribed, and the broker simply has no gate state to
-                    // give us. Saying so is the entire difference between "it works, the
-                    // gate has not moved since the broker last restarted" and "it's broken".
-                    return "Connected — no gate state reported yet"
-                return ""
-            }
-            color: informational ? "#a6adc8" : "#f38ba8"
-            font.pixelSize: root.unit * 4
-            bottomPadding: root.unit * 2
         }
 
         // Why the last tap did nothing. Always red: unlike the line above, this is never a

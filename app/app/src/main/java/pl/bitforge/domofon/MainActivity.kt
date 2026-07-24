@@ -18,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import org.qtproject.example.domofon.DomofonQml.Main
@@ -30,6 +31,7 @@ import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
+import pl.bitforge.domofon.gate.gateStatusLine
 import pl.bitforge.domofon.geo.GeofenceManager
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 import pl.bitforge.domofon.geo.formatHomeDistance
@@ -168,29 +170,21 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         qtQuickView.loadContent(mainQml)
         container.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
 
-        // Kotlin -> QML: push every state change into the QML property.
-        GateRepository.gateState
-            .onEach { if (qmlReady) mainQml.gateState = it.state }
+        // Kotlin -> QML: one status line, derived in the backend so the phone and the car
+        // word it identically (see gateStatusLine). Combined from the three flows that feed
+        // it — our own socket, the bridge, and the gate state — so a change in any one
+        // recomputes the single line the QML renders verbatim.
+        combine(
+            GateRepository.gateState,
+            GateRepository.bridgeStatus,
+            GateRepository.connection,
+        ) { gs, bridge, conn -> gateStatusLine(conn, bridge, gs.state) }
+            .onEach { if (qmlReady) mainQml.statusText = it }
             .launchIn(lifecycleScope)
 
-        GateRepository.bridgeStatus
-            .onEach { if (qmlReady) mainQml.bridgeStatus = it.name.lowercase() }
-            .launchIn(lifecycleScope)
-
-        // Our own connection, which until now the phone UI had no way to mention: a broker
-        // that rejected the password and a broker with nothing retained on it both rendered
-        // as "Gate: unknown" and no error at all.
-        GateRepository.connection
-            .onEach {
-                if (qmlReady) {
-                    mainQml.connectionStatus = it.status.name.lowercase()
-                    mainQml.connectionReason = it.reason
-                }
-            }
-            .launchIn(lifecycleScope)
-
-        // Why the last command did not reach the gate. Distinct from connectionReason: the
-        // socket can be perfectly healthy and the command still be refused by the bridge.
+        // Why the last command did not reach the gate. Distinct from the connection reason
+        // folded into the status line: the socket can be perfectly healthy and the command
+        // still be refused by the bridge, so this stays its own line.
         GateRepository.lastError
             .onEach { if (qmlReady) mainQml.lastError = it }
             .launchIn(lifecycleScope)
@@ -269,10 +263,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         QtRestartActivity.clearRestartStamp(this)
 
         // Seed the view with the state we already have.
-        mainQml.gateState = GateRepository.gateState.value.state
-        mainQml.bridgeStatus = GateRepository.bridgeStatus.value.name.lowercase()
-        mainQml.connectionStatus = GateRepository.connection.value.status.name.lowercase()
-        mainQml.connectionReason = GateRepository.connection.value.reason
+        mainQml.statusText = gateStatusLine(
+            GateRepository.connection.value,
+            GateRepository.bridgeStatus.value,
+            GateRepository.gateState.value.state,
+        )
         mainQml.lastError = GateRepository.lastError.value
         mainQml.cameraConfigured = ConfigStore.current.camera.hasPicture
         mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()

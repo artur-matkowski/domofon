@@ -20,9 +20,8 @@ import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
-import pl.bitforge.domofon.gate.BridgeStatus
-import pl.bitforge.domofon.gate.ConnectionStatus
 import pl.bitforge.domofon.gate.GateRepository
+import pl.bitforge.domofon.gate.gateStatusLine
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 import pl.bitforge.domofon.geo.formatHomeDistance
 
@@ -73,6 +72,13 @@ class GateScreen(
             .launchIn(lifecycleScope)
     }
 
+    // Rotating tick appended to the pane's first row so its text changes every snapshot. The
+    // Android Auto host only repaints the pane image when a row's text differs; a fresh
+    // bitmap on an otherwise-identical template is dropped as a no-op refresh, which is what
+    // froze the still. This is the car-side analogue of the phone's changing ?v= image URL.
+    private val spinner = charArrayOf('-', '/', '|', '\\')
+    private var spinnerTick = 0
+
     override fun onGetTemplate(): Template {
         if (!ConfigStore.current.isComplete) {
             return MessageTemplate.Builder(carContext.getString(R.string.not_configured_car))
@@ -84,39 +90,17 @@ class GateScreen(
         val state = GateRepository.gateState.value.state
         val primary = GateRepository.primaryAction(state)
 
-        // Our own connection is asked about first: "connecting…" was previously shown for a
-        // hard failure too, so a rejected password looked like a slow VPN for the length of
-        // the drive. A real failure now names itself on the head unit.
-        val connection = GateRepository.connection.value
-        val title = when (connection.status) {
-            ConnectionStatus.FAILED -> "Gate — ${connection.reason}"
-            ConnectionStatus.CONNECTING, ConnectionStatus.DISCONNECTED ->
-                if (state == GateRepository.STATE_UNKNOWN) "Gate — connecting…" else "Gate — $state"
-            // OFFLINE is the bridge's own LWT — a fact worth alarming about. UNKNOWN is the
-            // normal opening state of a fresh (VPN) connection and must not read as an
-            // outage; once retained state or a live message arrives, the title carries real
-            // content.
-            ConnectionStatus.CONNECTED, ConnectionStatus.DEGRADED ->
-                when (GateRepository.bridgeStatus.value) {
-                    BridgeStatus.OFFLINE -> "Gate — unreachable"
-                    // Silence from the gate service is its own answer, and a different one
-                    // from "the service is here and the gate simply has not moved". Folding
-                    // the two together is what let a bridge that was not on the broker at
-                    // all read as a healthy connection on both screens.
-                    BridgeStatus.UNKNOWN ->
-                        if (state == GateRepository.STATE_UNKNOWN) "Gate — waiting for the service"
-                        else "Gate — $state"
-                    BridgeStatus.ONLINE ->
-                        if (state == GateRepository.STATE_UNKNOWN) "Gate — no state reported"
-                        else "Gate — $state"
-                }
-        }
+        // The status line is derived once, in the backend, and rendered verbatim here and on
+        // the phone — see [gateStatusLine] for why the wording lives in a single place.
+        val statusLine = gateStatusLine(
+            GateRepository.connection.value,
+            GateRepository.bridgeStatus.value,
+            state,
+        )
 
-        // A refused command is worth pre-empting the title for: on the head unit there is no
-        // second line to put it on, and a driver who tapped Open needs to know it did not
-        // happen more than they need the state they already had.
+        // Why the last command did not reach the gate, kept as its own string — identical to
+        // the phone's error line — rather than folded into the status.
         val error = GateRepository.lastError.value
-        val heading = if (error.isEmpty()) title else "Gate — $error"
 
         // "" whenever the tracker has nothing (feature off, not granted, no fix yet).
         val distanceText = formatHomeDistance(distanceTracker.distance.value)
@@ -124,14 +108,20 @@ class GateScreen(
         // Same gate as the phone panel: no snapshot URL, no frame coming, and the camera
         // template would be a permanent empty placeholder on the head unit.
         return if (ConfigStore.current.camera.hasPicture) {
-            cameraTemplate(heading, distanceText, primary.label, primary.action)
+            cameraTemplate(statusLine, error, distanceText, primary.label, primary.action)
         } else {
-            gridTemplate(heading, distanceText, primary.label, primary.action)
+            gridTemplate(statusLine, error, distanceText, primary.label, primary.action)
         }
     }
 
     /** The original camera-less layout: one grid cell that is the gate button. */
-    private fun gridTemplate(title: String, distanceText: String, label: String, action: String): Template {
+    private fun gridTemplate(
+        statusLine: String,
+        error: String,
+        distanceText: String,
+        label: String,
+        action: String,
+    ): Template {
         val icon = if (action == "close") R.drawable.ic_gate_close else R.drawable.ic_gate_open
 
         val button = GridItem.Builder()
@@ -140,29 +130,41 @@ class GateScreen(
             .setOnClickListener { GateRepository.sendCommand(action) }
             .build()
 
-        // A GridTemplate has no free text row, so distance folds into the header title.
+        // A GridTemplate has no free text row: a refused command outranks the status — the
+        // driver needs to know their tap did nothing — and distance folds into the header.
+        val heading = error.ifEmpty { statusLine }
         return GridTemplate.Builder()
-            .setTitle(if (distanceText.isEmpty()) title else "$title · $distanceText")
+            .setTitle(if (distanceText.isEmpty()) heading else "$heading · $distanceText")
             .setHeaderAction(Action.APP_ICON)
             .setSingleList(ItemList.Builder().addItem(button).build())
             .build()
     }
 
     /** Camera configured: pane with the latest still and the gate button beneath it. */
-    private fun cameraTemplate(title: String, distanceText: String, label: String, action: String): Template {
+    private fun cameraTemplate(
+        statusLine: String,
+        error: String,
+        distanceText: String,
+        label: String,
+        action: String,
+    ): Template {
         val frame = grabber.frame.value
         val image =
             if (frame != null) CarIcon.Builder(IconCompat.createWithBitmap(frame)).build()
             else CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_camera_off)).build()
 
-        // A Pane allows up to two rows; the gate line uses the first. Distance takes the
-        // second when there is one, so it reads as its own line under the still rather than
-        // being crammed into the title.
+        val spin = spinner[spinnerTick++ % spinner.size]
+
+        // A Pane allows up to two rows. The first always carries the status line — and the
+        // spinner, so its text changes every snapshot and the host actually repaints the
+        // still (see [spinner]). The second takes the error when there is one — a refused
+        // command outranks distance — otherwise the distance line.
+        val second = error.ifEmpty { distanceText }
         val pane = Pane.Builder()
             .setImage(image)
-            .addRow(Row.Builder().setTitle(title).build())
+            .addRow(Row.Builder().setTitle("$statusLine $spin").build())
             .apply {
-                if (distanceText.isNotEmpty()) addRow(Row.Builder().setTitle(distanceText).build())
+                if (second.isNotEmpty()) addRow(Row.Builder().setTitle(second).build())
             }
             .addAction(
                 Action.Builder()
