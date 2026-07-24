@@ -58,6 +58,11 @@ Update this as you go — it is how future guidance sessions know where you are.
       **choppy** (media3 renders the camera's irregular RTP timing literally); a **go2rtc
       restream** URL smooths it and stays inside the one-URL model (ch. 10). Still unproven:
       **live video** (QtMultimedia, ch. 04 §2), and **audio during a car session**.*
+      <br>*2026-07-24: the phone panel **blanked for a frame on every snapshot** (a QtQuick
+      `Image` drops its pixmap the moment its `source` changes and then decodes
+      asynchronously). Now double-buffered on both sides — two alternating cache files in
+      `MainActivity.writeFrame()`, two stacked `Image`s in `Main.qml` swapping only on
+      `Image.Ready`. Untested on device.*
 - [ ] **M4** — Gate control + live state working in the phone UI (ch. 05)
       <br>*MQTT gate control **and state** verified on the device against the real broker in
       an R8 release build. `GateRepository` owns the connection (open whenever there is no
@@ -78,6 +83,17 @@ Update this as you go — it is how future guidance sessions know where you are.
       MainActivity — see docs/10). The frame source was replaced on 2026-07-24 (see M3);
       the template code and its gating are unchanged apart from which config field they
       read.*
+      <br>*2026-07-24, from the first real-car run: the head unit **dimmed and came back**
+      every snapshot. Cause was the per-snapshot spinner in the pane's first row — a row
+      whose strings change is a new template, not a refresh, so the host played its screen
+      transition. Pane is now a fixed single row (status as title, error + distance as its
+      two text lines) with the bitmap as the only per-snapshot difference, plus a 150 ms
+      debounce on the merged invalidate flow. Same run: the car screen gained a **second
+      button** — the state-dependent Open/Close plus an unconditional **Stop** (a Pane takes
+      no more than two actions); the arrival notification deliberately keeps one. Icons on
+      the car are now `CarColor.DEFAULT`-tinted so the host can recolour them for a light
+      theme. **All untested since the change** — the freeze this spinner was covering for may
+      come back (ch. 10 → Android Auto).*
 - [ ] **M7** — Geofence entry triggers the gate pop-up (ch. 08)
       <br>*2026-07-24: **distance-from-home** readout added on both surfaces — a
       "2.3 km from home" / "At home" line under the gate state in the phone QML view, and a
@@ -102,6 +118,11 @@ Update this as you go — it is how future guidance sessions know where you are.
       secrets, all three receivers `exported="false"`, storage permissions gone. Not ticked —
       **nothing has been re-tested on the phone or the DHU since the refactor**, and the Play
       Console work in ch. 11 §5 has not started.*
+      <br>*2026-07-24: the launcher icon was a bare white-on-transparent vector, so launchers
+      composited it onto a white plate and it disappeared. Replaced with a real
+      **adaptive icon** (`mipmap-anydpi-v26`, dark `#1E1E2E` background layer, `<monochrome>`
+      for themed icons); the notification small icon deliberately stays the white silhouette.
+      A 512 px Play listing icon still has to be produced by hand.*
 
 ## Repo layout (target)
 

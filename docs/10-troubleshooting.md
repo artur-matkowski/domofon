@@ -176,6 +176,26 @@ of each section.
   **Cause**: usually TCP-based VPN transport (TCP-over-TCP).
   **Fix**: switch OpenVPN to UDP (ch. 09 §1.5).
 
+- **Symptom**: on the **phone**, the camera panel blanks for a frame on every snapshot — a
+  black flicker at exactly the snapshot interval. (Observed on device 2026-07-24.)
+  **Cause**: a QtQuick `Image` given a new `source` **drops its pixmap immediately** and
+  then decodes on a worker thread (`asynchronous: true`), so between the two there is
+  nothing to paint and the panel's own background shows through. `cache: false` guarantees
+  a real reload every time. A second, rarer face of the same bug: `writeFrame()` rewrote one
+  fixed cache file, so the loader could be reading `camera-frame.jpg` while the next JPEG
+  was being written over it — a torn read fails the load and the panel stays blank until the
+  *following* snapshot.
+  **Fix** (2026-07-24): **double-buffer, both sides.** `MainActivity.writeFrame()` alternates
+  between `camera-frame-0.jpg` and `camera-frame-1.jpg` (no file is rewritten while it may
+  still be read; the alternating name is also what makes each URL differ, so the old hidden
+  `?v=` cache-buster is gone). `Main.qml` holds **two** stacked `Image`s and a `showA` bool:
+  the new URL goes to whichever is hidden, and the swap happens in `onStatusChanged` only on
+  `Image.Ready`, with a 150 ms opacity `Behavior`. The visible still is never the one
+  loading, so there is no blank frame — and a failed load simply never swaps, leaving the
+  last good picture up.
+  **The rule this leaves behind**: never point a live `Image` at a changing URL. Load into a
+  spare and swap on `Ready`.
+
 ## MQTT
 
 - **Symptom**: app connects on Wi-Fi but not over VPN.
@@ -305,6 +325,63 @@ of each section.
   **Fix**: see the *Desktop Head Unit* section below — it has the real causes. (`libsdl2`
   and `libportaudio2` are usually already present and are **not** what's missing; the
   DHU's unmet dependency is LLVM's `libc++`.)
+
+- **Symptom**: **the whole head-unit screen dims and comes back** every snapshot interval —
+  a smooth ~200 ms fade down and up, then the new still and text. Not a glitch; it looks
+  like the app being switched off and on. (Observed in the Passat, 2026-07-24.)
+  **Cause**: that fade is the host's **screen-transition animation**. The Car App Library
+  updates a template *in place* only when the new one counts as a **refresh** of the
+  previous one, and for `PaneTemplate` that turns on the rows: same number of rows, same
+  strings. Anything else is a new template — a transition, and a bite out of the host's
+  per-step template quota. `GateScreen` was appending a rotating `- / | \` spinner to the
+  first row's title on every build (commit `f3547cf`, to stop a *frozen* still), and its row
+  count flipped 1↔2 as the error/distance line appeared and disappeared. So every snapshot
+  was, by construction, a full template transition.
+  **Fix** (2026-07-24): make the pane's shape constant — **exactly one row, always**: status
+  as the title, error and distance as its text lines (a pane row allows two). The spinner is
+  gone. Between snapshots the only difference is the bitmap, which is what the refresh path
+  is for. Also `debounce(150 ms)` on the merged invalidate flow, so a snapshot and a distance
+  reading landing together no longer push two templates back to back.
+  **Watch for the flip side**: this is the exact trade the spinner was making. If the still
+  goes back to being *frozen*, the host is not repainting the pane image on a refresh, and
+  the answer is a coarse deliberate change (e.g. a minute-resolution stamp on the row) —
+  blink once a minute, not once a snapshot. Do not go back to a per-snapshot spinner.
+
+- **Measured template limits** (read out of `androidx.car.app:app:1.7.0` itself, so no need
+  to re-derive them): a **`Pane` takes at most 2 actions** —
+  `PaneTemplate.Builder.build()` validates against
+  `ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`, `maxActions = 2`, `maxCustomTitles = 2` —
+  which is why the car screen offers the primary action plus Stop and not the phone's three
+  buttons. A **pane row takes 2 text lines** and no click listener
+  (`ROW_CONSTRAINTS_PANE`). A template `ActionStrip` is capped at 2 actions with only 1
+  custom title (`ACTIONS_CONSTRAINTS_SIMPLE`). Over-stepping any of these is an
+  `IllegalArgumentException` at *runtime*, not a compile error — a green build proves
+  nothing here.
+
+## Icons and theming
+
+- **Symptom**: the app icon is **invisible on any light background** — the launcher, the app
+  info screen, the Android Auto header. The white "gate bars" are there on a dark wallpaper
+  and gone on a white one. (Observed on device 2026-07-24.)
+  **Cause**: `android:icon` pointed at `@drawable/ic_gate` — a bare 24 dp vector, solid
+  `#FFFFFFFF` paths on a transparent canvas, with no background layer. A modern launcher
+  treats a non-adaptive icon as *legacy* and composites it onto a **white shim**: white art
+  on a white plate. The same applies to every white-only vector this app hands to the car
+  host, on a light head-unit theme.
+  **Fix** (2026-07-24): a real adaptive icon —
+  `res/mipmap-anydpi-v26/ic_launcher.xml` (+ `_round`), with
+  `@color/ic_launcher_background` (`#1E1E2E`, the QML scene colour) as the background layer,
+  `@drawable/ic_gate_foreground` (the same art, scaled onto the 108-unit canvas inside the
+  72-unit safe zone) as the foreground, and the same drawable as `<monochrome>` for Android
+  13 themed icons. Manifest now uses `@mipmap/ic_launcher` + `android:roundIcon`. `minSdk` is
+  28, so `-v26` resolves on every supported device and there is no legacy PNG set to keep in
+  sync. In the car, resource icons go through `GateScreen.themedIcon()`, which sets
+  `CarColor.DEFAULT` as the tint and lets the host recolour them for whichever theme it is
+  drawing.
+  **Not** changed, deliberately: `GateNotifier` still uses `R.drawable.ic_gate` as the
+  notification small icon. That slot *wants* a white silhouette on transparency — the system
+  tints it — and is the one place the old asset was right. The camera still is never tinted
+  either; tinting a photograph flattens it.
 
 ## Geofencing
 

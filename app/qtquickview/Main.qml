@@ -15,7 +15,8 @@ Rectangle {
     property string statusText: ""
 
     // Kotlin -> QML. The camera snapshot. cameraFrame is a file:// URL to the latest still
-    // (a Bitmap can't cross the QtQuickView bridge), refreshed with a changing ?v= query.
+    // (a Bitmap can't cross the QtQuickView bridge); the URL alternates between two cache
+    // files, so every frame is a new URL and no file is rewritten while it is being read.
     // cameraStatus mirrors CameraFrameGrabber.Status; cameraConfigured gates the whole panel
     // so a build with no RTSP URL shows just the gate controls, exactly as before.
     property string cameraFrame: ""
@@ -68,6 +69,7 @@ Rectangle {
         // camera configured the controls below center exactly as they did before this panel
         // existed. 16:9 box; the still is letterboxed inside it (PreserveAspectFit).
         Rectangle {
+            id: cameraPanel
             width: parent.width
             height: root.cameraConfigured ? width * 9 / 16 : 0
             visible: root.cameraConfigured
@@ -75,13 +77,50 @@ Rectangle {
             radius: root.unit
             clip: true
 
+            // Which of the two Images below is the one on screen. Double-buffering, because
+            // a single Image pointed at a new URL drops its pixmap immediately and then
+            // decodes asynchronously — so every snapshot flashed the empty box behind it.
+            // The new still is loaded into whichever Image is hidden and only becomes
+            // visible once it reports Ready, which means there is never a moment with
+            // nothing to paint. A load that fails simply never swaps: the last good still
+            // stays up.
+            property bool showA: true
+
+            Connections {
+                target: root
+                function onCameraFrameChanged() {
+                    if (root.cameraFrame === "") {
+                        imgA.source = ""
+                        imgB.source = ""
+                        return
+                    }
+                    if (cameraPanel.showA)
+                        imgB.source = root.cameraFrame
+                    else
+                        imgA.source = root.cameraFrame
+                }
+            }
+
             Image {
+                id: imgA
                 anchors.fill: parent
-                source: root.cameraFrame
-                cache: false            // the URL is reused; the ?v= query is what differs
+                cache: false            // one shot per URL; the two URLs alternate
                 asynchronous: true
                 fillMode: Image.PreserveAspectFit
-                visible: root.cameraFrame !== ""
+                opacity: cameraPanel.showA ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 150 } }
+                onStatusChanged: if (status === Image.Ready && !cameraPanel.showA) cameraPanel.showA = true
+            }
+
+            Image {
+                id: imgB
+                anchors.fill: parent
+                cache: false
+                asynchronous: true
+                fillMode: Image.PreserveAspectFit
+                opacity: cameraPanel.showA ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 150 } }
+                onStatusChanged: if (status === Image.Ready && cameraPanel.showA) cameraPanel.showA = false
             }
 
             Text {

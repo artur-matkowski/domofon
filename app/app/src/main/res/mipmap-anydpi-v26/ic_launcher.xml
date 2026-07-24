@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- minSdk is 28, so every device this app runs on resolves -v26 and there is no legacy
+     PNG path left to keep in sync. That is the point of this file: the old
+     android:icon="@drawable/ic_gate" handed launchers a bare white-on-transparent vector,
+     which they composite onto a white shim — an invisible icon on any light background. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_gate_foreground"/>
+    <monochrome android:drawable="@drawable/ic_gate_foreground"/>
+</adaptive-icon>

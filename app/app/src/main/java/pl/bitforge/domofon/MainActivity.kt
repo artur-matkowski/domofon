@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
      */
     private val homeDistanceTracker by lazy { HomeDistanceTracker(applicationContext) }
 
-    /** Bumped per frame so the QML Image URL changes and the view actually reloads. */
+    /** Bumped per frame; its parity picks the cache file, so the URL alternates. See [writeFrame]. */
     private var frameVersion = 0
 
     /** Setting a QML property before the view reports READY is a no-op at best. */
@@ -298,15 +298,22 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
     /**
      * Writes the latest frame to a private cache file and returns a `file://` URL for QML.
-     * The `?v=` query changes every call so the URL differs each time — setting an
-     * identical string on a QML property emits no change, and QtQuick caches Image sources
-     * by URL, so without it a new frame would never repaint. The bitmap is already ≤640 px
-     * (downscaled in the grabber), so the JPEG is a few KB.
+     *
+     * Two files, used alternately, rather than one path plus a `?v=` cache-buster. Both
+     * schemes give QML a URL that differs from the last one — required, because setting an
+     * identical string on a QML property emits no change and QtQuick caches Image sources
+     * by URL — but only alternating names guarantee we are never *rewriting the file Qt's
+     * loader thread is reading*, which can fail the load outright and leave the panel blank
+     * until the next snapshot. The QML side loads into whichever Image is hidden and only
+     * swaps once the decode is done, so the old still stays up meanwhile.
+     *
+     * The bitmap is already ≤960 px on its longest edge (downscaled in the grabber), so the
+     * JPEG is a few tens of KB.
      */
     private fun writeFrame(bitmap: Bitmap): String {
-        val file = File(cacheDir, "camera-frame.jpg")
+        val file = File(cacheDir, "camera-frame-${++frameVersion % 2}.jpg")
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-        return "file://${file.absolutePath}?v=${++frameVersion}"
+        return "file://${file.absolutePath}"
     }
 
     /**

@@ -106,6 +106,27 @@ class GateScreen(carContext: CarContext) : Screen(carContext) {
 Note what's *absent*: no MQTT code, no REST, no state parsing — `GateRepository` from
 ch. 05 already does it all. The car screen is ~60 lines.
 
+**What shipped differs from that sketch in three ways**, all of them learned in the car:
+
+1. **A camera means a `PaneTemplate`, not a grid.** The pane image is the only template slot
+   that renders a large bitmap, so with a camera configured `GateScreen` builds a pane with
+   the latest still; the grid above is the camera-less fallback. Which one is built depends
+   on *configuration only*, never on fetch health, so the template type cannot flip
+   mid-session.
+2. **Two buttons, not three.** A `Pane` accepts at most two actions
+   (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`), so the car offers
+   `GateRepository.primaryAction()` — Open *or* Close, whichever the current state calls for,
+   the same call the arrival notification makes — plus an unconditional **Stop**. The
+   notification itself stays at **one** button: a driver reaching for a heads-up needs one
+   target.
+3. **The pane's shape must not change between snapshots.** The host only updates a template
+   *in place* when the new one counts as a **refresh** of the last, and for `PaneTemplate`
+   that is decided by the rows: same count, same strings. Change one and the head unit plays
+   a full screen transition — it visibly dims and comes back. So the pane carries exactly one
+   row (status as the title, error and distance as its two text lines) and lets the fresh
+   bitmap be the only difference. See the *Android Auto* section of ch. 10 for the whole
+   story, including the frozen-still failure on the other side of that trade.
+
 ## 3. The heads-up notification on the car screen
 
 One line upgrades the ch. 06 notification to also surface in the car — uncomment and
