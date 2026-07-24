@@ -196,6 +196,12 @@ Two rules, both of which cost an afternoon to learn (ch. 10):
 - **Run it in a terminal.** It reads console commands and exits at stdin EOF, so
   backgrounding it makes it die instantly with no window.
 
+A third one, cheaper but confusing while it lasts: an active session keeps the app
+**process** alive through the bound `CarAppService`, so relaunching the phone UI reuses a
+Qt runtime a previous `MainActivity` owned and comes up blank. `adb shell am force-stop
+pl.bitforge.domofon` before launching the phone UI; the car session rebinds by itself.
+See ch. 10, *Android Auto*.
+
 A car screen opens on your Debian desktop, projecting from the phone. Iterate here —
 it's 10× faster than walking to the car. Keyboard shortcuts and options:
 <https://developer.android.com/training/cars/testing/dhu>.

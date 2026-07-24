@@ -112,6 +112,38 @@ of each section.
   into the QML root, bypassing Qt's own metrics for layout. Not currently wired in.)
   Fixed 2026-07-23; verify on the real car, not the DHU — the DHU never triggered it.
 
+- **Symptom**: with a DHU (or car) session connected, opening the phone app shows a plain
+  dark rectangle — no buttons, no status line, no gear. It is *not* the mis-scale above:
+  a mis-scale renders a huge fragment of a button, this renders nothing at all. Diagnosed
+  on-device 2026-07-24.
+  **Cause**: the bound `DomofonCarAppService` keeps the app **process** alive for the whole
+  car session. Qt is one `QGuiApplication` per process, tied to the activity that first
+  loaded it, so when `MainActivity` is destroyed (back out, swipe from recents) and later
+  relaunched *into that same surviving process*, the new `QtQuickView` attaches and its
+  root window is even created — but the scene never renders and `onStatusChanged` never
+  reports `READY`. Without a car session this is invisible, because the process dies with
+  the task and every launch gets a fresh Qt runtime. Same wedge as the blank-screen entry
+  in the *Configuration / settings* section below; the car session is just a reliable way
+  to reach it.
+  **Evidence to confirm it is this and not something else** (all read-only):
+  `dumpsys activity top` shows `QtQuickView` → `QtWindow` → `QtTextureView` present and
+  correctly sized, and the activity config clean (no car-mode/density contamination), yet
+  the screen is uniform `#1e1e2e` — the wrapper `FrameLayout`'s background;
+  `dumpsys activity services pl.bitforge.domofon` shows the car service bound by
+  `com.google.android.projection.gearhead`; `dumpsys activity activities` shows several
+  `MainActivity` `ActivityRecord`s inside one pid, and no `QtQuickView status: READY` in
+  logcat for that pid.
+  **Fix (workaround today)**: `adb shell am force-stop pl.bitforge.domofon`, then launch.
+  Verified with the DHU still connected: the fresh process renders normally, and gearhead
+  rebinds the car service by itself. Do not bother stopping the DHU — the session is not
+  the problem, the reused process is.
+  **Proper fix (not implemented yet)**: a READY watchdog in `MainActivity` — if
+  `onStatusChanged` has not reported `READY` a couple of seconds after `loadContent`,
+  recreate the `QtQuickView` once and, failing that, restart the process from a small
+  `:restart`-process activity (a cooldown stamp in `SharedPreferences` keeps it from
+  looping). Killing the process also drops the car session for ~1 s while gearhead
+  rebinds; that only ever happens when the phone UI is already dead.
+
 ## RTSP / video
 
 - **Symptom**: works in `ffplay`, black screen in app.
