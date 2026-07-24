@@ -37,6 +37,22 @@ android {
     buildFeatures { buildConfig = true }
 
     signingConfigs {
+        // Pinned debug key. A stable keystore at the Gradle root (gitignored via *.keystore)
+        // so every debug build signs identically no matter who runs it — artur in-tree or the
+        // bitforge agent in a scratchpad copy. Without a pin each user/machine auto-generates
+        // its own random ~/.android/debug.keystore, and the next install across identities
+        // fails INSTALL_FAILED_UPDATE_INCOMPATIBLE, forcing an uninstall that wipes the
+        // Keystore-encrypted broker password and camera URL. Absent (fresh clone / CI) it
+        // falls back to AGP's default keystore, so a checkout without the file still builds.
+        getByName("debug") {
+            val debugKeystore = rootProject.file("domofon-debug.keystore")
+            if (debugKeystore.exists()) {
+                storeFile = debugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
         if (hasSigning) {
             create("release") {
                 storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
