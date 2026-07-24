@@ -164,6 +164,63 @@ of each section.
   `mosquitto_sub -t 'hc12/available' -v` must print a line immediately — silence means
   the birth is not retained.
 
+- **Symptom**: the app reports itself connected, but the gate reads `unknown` forever and
+  Open/Close/Stop do nothing — while the legacy REST path (`POST /sendhc12`) moves the gate
+  normally. Force-stopping the app fixes it until it happens again.
+  **Cause (app, found 2026-07-24)**: `GateRepository` held owner slots but no client, and
+  nothing in the class recovered from that. The whole reconnect machinery answers "the
+  connection failed"; this is "the connection was never attempted", which looked identical
+  on screen and had no path back. The owner count could reach it from both directions:
+  - **too high** — `connect()` read `else if (owners > 1 || client != null) return`, so with
+    two slots held and the client already retired, every later `connect()` returned without
+    opening anything. Harmless until `ad92c4a` gave `teardown()` three callers that retire
+    the client *without* dropping the count (`refresh()`, the broker-changed rebuild,
+    `reconnectNow()`).
+  - **too low** — `ArrivalPopUp` called `connect()` *inside* the `try` whose `finally`
+    disconnects, so a throwing `connect()` released a slot it never took; and the car
+    session's `onDestroy` released one whether or not its `connect()` had run yet. Either
+    drops the count below what the phone UI holds, tearing down a connection still in use —
+    and since `MainActivity.onStart` will not fire again while it is already on screen,
+    nothing rebuilds it.
+
+  What it looks like from outside, and how to confirm it in two commands: the app process is
+  alive and its activity resumed, yet
+  ```
+  adb shell "cat /proc/net/tcp /proc/net/tcp6 | grep -i 075B"     # 075B = port 1883
+  ```
+  prints **nothing**, and the broker log shows the phone's last session ending cleanly with
+  no attempt since (`docker logs mosquitto | grep <your client id prefix>`). Meanwhile
+  `mosquitto_sub -t 'hc12/#' -v` shows `hc12/available online` and fresh retained
+  `hc12/rx/Gate*` waiting to be collected. If a force-stop and relaunch fixes it, it is this
+  class of fault and not anything you configured.
+  **Fix (app)**: `connect()` now opens whenever there is no client, whatever the count says;
+  `teardown()` resets the connection status so a retired client cannot leave `CONNECTED`
+  behind; both miscounting call sites acquire and release symmetrically; and a 15 s watchdog
+  enforces the invariant *somebody holds the connection ⇒ a client exists*, acting only when
+  there is no client at all so it can never race the reconnect backoff.
+
+- **Symptom**: a command is published, the broker acks it, and the gate does not move — with
+  nothing on screen to say why.
+  **Cause**: `hc12-web-service` fails closed and explains itself on `hc12/error`
+  (`{"topic":"hc12/tx/OpenGate","reason":"idTarget out of range 0..255","ts":…}`), but the
+  app never subscribed to it. A refused command and a delivered one were the same screen,
+  because the broker acks the publish either way — it has no idea the bridge threw it away.
+  **Fix (app, 2026-07-24)**: the error topic is a configurable setting (*Error topic*,
+  default `hc12/error`), subscribed alongside availability. Rejections whose `topic` field
+  starts with our own command prefix surface as a red line on the phone and in the car
+  screen's title, expiring after 20 s so they can never be read as the result of a later
+  command. Rejections belonging to other publishers on that shared channel are ignored.
+  The same line now also reports a command that never left the phone at all.
+
+- **Symptom**: everything is configured, the broker shows the app connected, and still no
+  state and no actuation — with no error anywhere.
+  **Cause**: a topic prefix typed without its trailing slash. `GateRepository` concatenates
+  the prefix with a bare signal name, so `hc12/rx` yields `hc12/rxGateOpened` and `hc12/tx`
+  yields `hc12/txOpenGate`. The broker accepts both the subscription and the publish; nothing
+  ever matches; the settings row renders the value back exactly as typed, so it looks right.
+  **Fix (app, 2026-07-24)**: `ConfigStore` normalises both prefixes on read, so a value
+  already stored is repaired too, not just the next one typed.
+
 ## Android Auto
 
 - **Symptom**: app not in car launcher.

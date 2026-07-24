@@ -66,6 +66,18 @@ Update this as you go — it is how future guidance sessions know where you are.
       force-stopped), and the settings screen crashed on open. Gate **state** is still
       unconfirmed: the broker holds no retained `hc12/rx/Gate*`, so nothing has exercised
       the state path end-to-end yet.*
+      <br>*2026-07-24: that last sentence was wrong, and finding out why took the session.
+      The broker **does** hold fresh retained `hc12/rx/Gate*` and `hc12/available online`;
+      the bridge is connected and subscribed. The app was reaching none of it — it sat in
+      the foreground holding owner slots with **no client and no socket at all**, a state
+      `ad92c4a` made reachable and nothing recovered from. Fixed in `GateRepository`
+      (`connect()` opens whenever there is no client, symmetric acquire/release at the
+      call sites, plus a watchdog on the invariant). Alongside it, three things that made
+      this take a whole session are now impossible: the app subscribes to `hc12/error` and
+      shows the bridge's own rejection reason, a command that never left the phone says so,
+      "waiting for the gate service" no longer renders as "no gate state reported yet", and
+      topic prefixes are normalised so a missing trailing slash cannot silently break
+      everything. See ch. 10 → MQTT. **Not yet re-tested on the device.***
 - [ ] **M5** — Notification arrives on state change with the app backgrounded (ch. 06)
 - [ ] **M6** — Gate control on the car screen + heads-up notification, tested in DHU (ch. 07)
       <br>*Works in the DHU. The **real-car** smoke test is gated: *Unknown sources* doesn't

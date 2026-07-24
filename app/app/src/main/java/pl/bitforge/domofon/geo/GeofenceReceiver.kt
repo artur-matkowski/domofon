@@ -77,8 +77,13 @@ internal object ArrivalPopUp {
 
     fun run(context: Context, finish: () -> Unit) {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            // Outside the try, deliberately. Inside it, a connect() that threw — a malformed
+            // host reaches the HiveMQ builder as an IllegalArgumentException — would still
+            // run the finally, releasing an owner slot it never took. That drives the count
+            // below what the phone UI is holding, and the next disconnect() tears down a
+            // connection somebody is still using, with no lifecycle event left to rebuild it.
+            GateRepository.connect()
             try {
-                GateRepository.connect()
                 // Null when the VPN is asleep or the broker is unreachable. The pop-up says
                 // so rather than not appearing at all — silence looks identical to a bug.
                 val state = GateRepository.awaitFreshState(STATE_TIMEOUT_MS)

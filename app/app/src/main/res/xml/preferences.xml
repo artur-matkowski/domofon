@@ -77,6 +77,11 @@
             app:useSimpleSummaryProvider="true"/>
 
         <EditTextPreference
+            app:key="topics.error"
+            app:title="@string/pref_error_topic"
+            app:useSimpleSummaryProvider="true"/>
+
+        <EditTextPreference
             app:key="topics.nodeId"
             app:title="@string/pref_node_id"
             app:useSimpleSummaryProvider="true"/>

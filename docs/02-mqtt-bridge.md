@@ -1,5 +1,28 @@
 # 02 — MQTT topic contract + bridge service (milestone M1)
 
+> ## ⚠️ This chapter describes a bridge that was never deployed
+>
+> It documents a Python service publishing `domofon/gate/state` / `domofon/gate/command` /
+> `domofon/bridge/status`. **The app has not spoken that contract since `0901e2e`**, and
+> `bridge/` was dropped from the repo in that same commit. The real deployment is
+> **`hc12-web-service`** (C++/Poco, on `rpi-d`), whose MQTT bridge speaks:
+>
+> | Topic | Direction | Retained | Payload |
+> |---|---|---|---|
+> | `hc12/rx/<MessageName>` | radio → MQTT | yes | `{"idSender":4,"idTarget":255,"ts":"…Z"}` (no `value` for signals) |
+> | `hc12/tx/<MessageName>` | MQTT → radio | **must not be** | `{"idTarget":4}` — `idTarget` required, `idSender` forced to 0 |
+> | `hc12/error` | rejections | no | `{"topic":…,"reason":…,"ts":…}` |
+> | `hc12/available` | LWT | yes | `online` / `offline` |
+>
+> Message names (`OpenGate`, `GateOpened`, …) come from the shared
+> `hc12-message-definitions` repo; the topic *is* the message name, so an unknown name is
+> rejected rather than transmitted. The authoritative write-up is the wiki page
+> **`infra/hc12-web-service`**, and the app's side of it is `GateRepository`
+> (`SIGNAL_TO_STATE`) plus `DomofonConfig.Defaults`.
+>
+> Keep the rest of this chapter for the reasoning it records — the retained-state rule, the
+> LWT rule, and why the app never touches Postgres or REST — all of which still hold.
+
 The bridge is the only component that talks to Postgres and the REST API. Everything
 else — phone UI, Android Auto, notifications — sees only MQTT. Get this chapter right
 and every later chapter becomes UI work.

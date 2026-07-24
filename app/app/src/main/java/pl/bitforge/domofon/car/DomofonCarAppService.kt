@@ -51,16 +51,27 @@ class DomofonCarAppService : CarAppService() {
             // Observer first, then connect. Registering afterwards leaks an owner slot for
             // good if the host tears the session down in between — after which the count
             // never returns to zero and the connection is never rebuilt.
+            //
+            // But the same window cuts the other way: onDestroy between addObserver and
+            // connect() would release a slot this session never took, dropping the count
+            // below what the phone UI holds and tearing down a connection still in use. The
+            // flag is what makes the release match the acquisition rather than the ordering.
+            var holdsConnection = false
             lifecycle.addObserver(
                 object : DefaultLifecycleObserver {
                     override fun onStart(owner: LifecycleOwner) = grabber.start()
                     override fun onStop(owner: LifecycleOwner) = grabber.stop()
-                    override fun onDestroy(owner: LifecycleOwner) = GateRepository.disconnect()
+                    override fun onDestroy(owner: LifecycleOwner) {
+                        if (!holdsConnection) return
+                        holdsConnection = false
+                        GateRepository.disconnect()
+                    }
                 }
             )
 
             // An active Android Auto session is one of the three MQTT owners (ch. 06).
             GateRepository.connect()
+            holdsConnection = true
             GateNotifier.observe(carContext, lifecycleScope)
 
             return GateScreen(carContext, grabber)

@@ -29,6 +29,11 @@ Rectangle {
     property string connectionStatus: "disconnected"
     property string connectionReason: ""
 
+    // Kotlin -> QML. Why the last command did not reach the gate — either the bridge refused
+    // it (hc12/error) or it never left the phone. Empty when there is nothing to report; it
+    // clears itself after ~20 s so it can never be read as the state of a later command.
+    property string lastError: ""
+
     // QML -> Kotlin. Button presses flow out to GateRepository.sendCommand().
     signal commandRequested(string action)
 
@@ -136,6 +141,12 @@ Rectangle {
                     return "Gate system unreachable"
                 if (root.connectionStatus === "degraded")
                     return root.connectionReason
+                // Our socket is up but the gate service has not said "online". Normal for
+                // the first moment of a session; if it persists, the bridge is not on the
+                // broker and no button will ever do anything — which is a completely
+                // different problem from the line below, and used to render identically.
+                if (connected && root.bridgeStatus === "unknown")
+                    return "Connected — waiting for the gate service"
                 if (connected && root.gateState === "unknown")
                     // Connected, subscribed, and the broker simply has no gate state to
                     // give us. Saying so is the entire difference between "it works, the
@@ -144,6 +155,20 @@ Rectangle {
                 return ""
             }
             color: informational ? "#a6adc8" : "#f38ba8"
+            font.pixelSize: root.unit * 4
+            bottomPadding: root.unit * 2
+        }
+
+        // Why the last tap did nothing. Always red: unlike the line above, this is never a
+        // normal state of affairs, and it is the answer to the question the user is actually
+        // asking when they press Open a second time.
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            visible: root.lastError !== ""
+            text: root.lastError
+            color: "#f38ba8"
             font.pixelSize: root.unit * 4
             bottomPadding: root.unit * 2
         }

@@ -59,6 +59,7 @@ class GateScreen(
             GateRepository.gateState,
             GateRepository.bridgeStatus,
             GateRepository.connection,
+            GateRepository.lastError,
             ConfigStore.config,
             grabber.frame,
         )
@@ -93,18 +94,31 @@ class GateScreen(
             ConnectionStatus.CONNECTED, ConnectionStatus.DEGRADED ->
                 when (GateRepository.bridgeStatus.value) {
                     BridgeStatus.OFFLINE -> "Gate — unreachable"
-                    BridgeStatus.UNKNOWN, BridgeStatus.ONLINE ->
+                    // Silence from the gate service is its own answer, and a different one
+                    // from "the service is here and the gate simply has not moved". Folding
+                    // the two together is what let a bridge that was not on the broker at
+                    // all read as a healthy connection on both screens.
+                    BridgeStatus.UNKNOWN ->
+                        if (state == GateRepository.STATE_UNKNOWN) "Gate — waiting for the service"
+                        else "Gate — $state"
+                    BridgeStatus.ONLINE ->
                         if (state == GateRepository.STATE_UNKNOWN) "Gate — no state reported"
                         else "Gate — $state"
                 }
         }
 
+        // A refused command is worth pre-empting the title for: on the head unit there is no
+        // second line to put it on, and a driver who tapped Open needs to know it did not
+        // happen more than they need the state they already had.
+        val error = GateRepository.lastError.value
+        val heading = if (error.isEmpty()) title else "Gate — $error"
+
         // Same gate as the phone panel: with the grabber off there is no frame coming, and
         // the camera template would be a permanent empty placeholder on the head unit.
         return if (ConfigStore.current.camera.isConfigured && CameraFrameGrabber.ENABLED) {
-            cameraTemplate(title, primary.label, primary.action)
+            cameraTemplate(heading, primary.label, primary.action)
         } else {
-            gridTemplate(title, primary.label, primary.action)
+            gridTemplate(heading, primary.label, primary.action)
         }
     }
 

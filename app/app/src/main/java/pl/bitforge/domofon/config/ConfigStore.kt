@@ -39,6 +39,7 @@ object ConfigStore : PreferenceDataStore() {
     const val K_RX_PREFIX = "topics.rxPrefix"
     const val K_TX_PREFIX = "topics.txPrefix"
     const val K_AVAILABILITY = "topics.availability"
+    const val K_ERROR = "topics.error"
     const val K_NODE_ID = "topics.nodeId"
     const val K_PAYLOAD_KEY = "topics.payloadKey"
 
@@ -120,9 +121,10 @@ object ConfigStore : PreferenceDataStore() {
                 clientId = str(K_CLIENT_ID, ""),
             ),
             topics = DomofonConfig.Topics(
-                rxPrefix = str(K_RX_PREFIX, DomofonConfig.Defaults.RX_PREFIX),
-                txPrefix = str(K_TX_PREFIX, DomofonConfig.Defaults.TX_PREFIX),
-                availability = str(K_AVAILABILITY, DomofonConfig.Defaults.AVAILABILITY),
+                rxPrefix = prefix(K_RX_PREFIX, DomofonConfig.Defaults.RX_PREFIX),
+                txPrefix = prefix(K_TX_PREFIX, DomofonConfig.Defaults.TX_PREFIX),
+                availability = str(K_AVAILABILITY, DomofonConfig.Defaults.AVAILABILITY).trim(),
+                error = str(K_ERROR, DomofonConfig.Defaults.ERROR).trim(),
                 nodeId = int(K_NODE_ID, DomofonConfig.Defaults.NODE_ID),
                 payloadKey = str(K_PAYLOAD_KEY, DomofonConfig.Defaults.PAYLOAD_KEY),
             ),
@@ -155,6 +157,22 @@ object ConfigStore : PreferenceDataStore() {
 
     private fun str(key: String, fallback: String): String =
         prefs.getString(key, fallback) ?: fallback
+
+    /**
+     * A topic prefix, guaranteed to end in `/`.
+     *
+     * [GateRepository] builds a topic by concatenating this with a bare signal name, so a
+     * prefix typed as `hc12/rx` (which is how a person naturally writes it, and how the
+     * settings row renders it back) silently produces `hc12/rxGateOpened`. The broker
+     * accepts the subscription and the publish, nothing ever matches, and both the gate
+     * state and every command vanish with no error anywhere. Normalising on read fixes it
+     * for a value already stored, not just for the next one typed.
+     */
+    private fun prefix(key: String, fallback: String): String {
+        val value = str(key, fallback).trim()
+        if (value.isEmpty()) return fallback
+        return if (value.endsWith('/')) value else "$value/"
+    }
 
     /** Numeric fields come from EditTextPreference, so they are strings on disk. */
     private fun int(key: String, fallback: Int): Int =

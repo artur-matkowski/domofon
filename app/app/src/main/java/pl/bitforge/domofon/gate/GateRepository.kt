@@ -11,6 +11,7 @@ import com.hivemq.client.mqtt.mqtt3.message.publish.Mqtt3Publish
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -142,6 +143,21 @@ object GateRepository {
      */
     val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
 
+    private val _lastError = MutableStateFlow("")
+
+    /**
+     * The most recent reason a command did not reach the gate, or "" for none.
+     *
+     * Two sources, one line on screen: the bridge's own rejection from the error topic, and
+     * our failure to publish at all. Neither used to be visible anywhere — a command the
+     * broker acked and the bridge then threw away looked exactly like one that opened the
+     * gate, which is most of why "the buttons do nothing" took a session to pin down.
+     */
+    val lastError: StateFlow<String> = _lastError.asStateFlow()
+
+    /** Retires [_lastError] after [ERROR_TTL_MS]; replaced whenever a newer error lands. */
+    private var errorExpiry: Job? = null
+
     @Volatile
     private var client: Mqtt3AsyncClient? = null
 
@@ -173,6 +189,9 @@ object GateRepository {
     /** Current backoff for [scheduleReconnect]. Reset to the floor on every successful connect. */
     private var reconnectDelayMs = INITIAL_RECONNECT_MS
 
+    /** Runs [WATCHDOG_PERIOD_MS] while anybody holds the connection. See [startWatchdog]. */
+    private var watchdog: Job? = null
+
     private val tsLock = Any()
 
     /** Newest `ts` seen across all gate signals. Guarded by [tsLock]. */
@@ -183,20 +202,35 @@ object GateRepository {
     @Synchronized
     fun connect() {
         owners++
-        Log.i(TAG, "connect(): owners=$owners")
+        Log.i(TAG, "connect(): owners=$owners, client=${client != null}")
 
-        // A live client built from settings the user has since corrected is worse than no
-        // client at all: automaticReconnect keeps retrying the *old* credentials forever,
-        // so fixing a mistyped password in Settings would appear to change nothing until
-        // the process happened to die. Rebuild instead of returning.
-        if (client != null && active.broker != ConfigStore.current.broker) {
-            Log.i(TAG, "broker settings changed — rebuilding the connection")
-            teardown()
-        } else if (owners > 1 || client != null) {
-            return
+        if (client != null) {
+            // A live client built from settings the user has since corrected is worse than
+            // no client at all: it would go on retrying the *old* credentials, so fixing a
+            // mistyped password in Settings would appear to change nothing until the
+            // process happened to die. Rebuild instead of returning.
+            if (active.wire != ConfigStore.current.wire) {
+                Log.i(TAG, "broker settings changed — rebuilding the connection")
+                teardown()
+            } else {
+                return
+            }
         }
 
+        // No client, so open one — whatever the owner count says.
+        //
+        // This used to read `else if (owners > 1 || client != null) return`, and the
+        // `owners > 1` half of that was a silent, permanent kill switch. It was harmless
+        // only while `client` could not be null with owners still held, which stopped being
+        // true when [teardown] gained callers that retire the client *without* touching the
+        // count ([refresh], the rebuild above, [reconnectNow]). Reach that state once — a
+        // settings edit that lands on an incomplete config, or an owner slot leaked by a
+        // car session the host tore down — and every later connect() returned right here:
+        // no socket, no retry, no error on screen, until the process was force-stopped.
+        // Measured on device: the app sat in the foreground for over an hour holding zero
+        // sockets to port 1883 while the broker had fresh retained state waiting for it.
         open()
+        startWatchdog()
     }
 
     /**
@@ -210,9 +244,54 @@ object GateRepository {
     @Synchronized
     fun refresh() {
         if (owners == 0) return
-        if (client != null && active.broker == ConfigStore.current.broker) return
+        if (client != null && active.wire == ConfigStore.current.wire) return
         teardown()
         open()
+    }
+
+    /**
+     * The invariant this class kept breaking: *somebody holds the connection, therefore a
+     * client exists*.
+     *
+     * Everything else here recovers from a connection that failed. Nothing recovered from a
+     * connection that was never attempted, and that is the state the app actually shipped
+     * in — foreground, owners held, no socket, no retry, no message, until it was
+     * force-stopped. It arose from the owner count being wrong in either direction, and the
+     * call sites that could get it wrong have both been fixed; this is here because the
+     * count is reachable from four components and the next mistake would be just as silent.
+     *
+     * Deliberately narrow: it only acts when there is **no client at all**. A client that
+     * exists and is failing belongs to [scheduleReconnect] and its backoff, and racing that
+     * would turn a broker outage into a reconnect storm.
+     */
+    private fun startWatchdog() {
+        // Called from connect(), which holds the monitor — and [ensureOpen] clears this
+        // field under that same monitor as it exits. Testing `watchdog?.isActive` instead
+        // would leave a window where the loop has decided to stop but the job is not marked
+        // complete yet: a connect() landing there would skip starting a replacement and the
+        // invariant would go unwatched for the rest of the session.
+        if (watchdog != null) return
+        watchdog = scope.launch {
+            while (true) {
+                delay(WATCHDOG_PERIOD_MS)
+                if (!ensureOpen()) return@launch
+            }
+        }
+    }
+
+    /** One watchdog tick. Returns false when nobody wants a connection any more. */
+    @Synchronized
+    private fun ensureOpen(): Boolean {
+        if (owners == 0) {
+            // Retire the field before the loop exits, so the next connect() starts a fresh
+            // watchdog rather than trusting this one.
+            watchdog = null
+            return false
+        }
+        if (client != null) return true
+        Log.w(TAG, "watchdog: $owners owner(s) but no client — opening")
+        open()
+        return true
     }
 
     /**
@@ -353,7 +432,6 @@ object GateRepository {
         if (owners > 0) return
 
         teardown()
-        _connection.value = ConnectionState(ConnectionStatus.DISCONNECTED)
     }
 
     /**
@@ -369,6 +447,13 @@ object GateRepository {
         val old = client
         client = null
         _bridgeStatus.value = BridgeStatus.UNKNOWN
+
+        // A retired client must not leave CONNECTED behind. Every caller either opens a
+        // fresh one immediately (which reports CONNECTING over this) or is letting go
+        // entirely, so the only thing this can overwrite is a status that has outlived its
+        // socket — and that lie is load-bearing: sendCommandAwait() waits on this very flow
+        // before publishing, and the settings screen presents it as a live credential test.
+        _connection.value = ConnectionState(ConnectionStatus.DISCONNECTED)
 
         // The gate state is only meaningful while we are attached to the broker. Keeping
         // it would let awaitFreshState() return this value instantly on the next connect —
@@ -389,13 +474,30 @@ object GateRepository {
      */
     private fun qos(code: Int): MqttQos = MqttQos.fromCode(code) ?: MqttQos.AT_LEAST_ONCE
 
+    /**
+     * Publishes a reason the user can act on, and starts its expiry.
+     *
+     * Time-limited on purpose: an error is about the command just attempted, and one left on
+     * screen indefinitely would be read as the state of the *next* one.
+     */
+    private fun reportError(reason: String) {
+        Log.w(TAG, "command error: $reason")
+        _lastError.value = reason
+        errorExpiry?.cancel()
+        errorExpiry = scope.launch {
+            delay(ERROR_TTL_MS)
+            _lastError.compareAndSet(reason, "")
+        }
+    }
+
     private fun subscribeAll(myEpoch: Int) {
         val c = client ?: return
         if (myEpoch != epoch) return
         val cfg = active
         val subscriptions =
             SIGNAL_TO_STATE.keys.map { cfg.topics.rxPrefix + it to qos(cfg.mqtt.qosState) } +
-                (cfg.topics.availability to qos(cfg.mqtt.qosAvailability))
+                (cfg.topics.availability to qos(cfg.mqtt.qosAvailability)) +
+                (cfg.topics.error to qos(cfg.mqtt.qosAvailability))
         subscriptions.forEach { (topic, topicQos) ->
             c.subscribeWith()
                 .topicFilter(topic)
@@ -475,6 +577,11 @@ object GateRepository {
             return
         }
 
+        if (topic == cfg.topics.error) {
+            onBridgeError(payload)
+            return
+        }
+
         val state = SIGNAL_TO_STATE[topic.removePrefix(cfg.topics.rxPrefix)] ?: return
         val rawTs = try {
             JSONObject(payload).optString("ts")
@@ -527,6 +634,31 @@ object GateRepository {
         }
 
         Log.i(TAG, "state -> $state (retained=${publish.isRetain})")
+    }
+
+    /**
+     * A rejection the bridge published, turned into a line on screen — but only if it is
+     * ours.
+     *
+     * The error topic is a shared diagnostic channel: every publisher's rejections land on
+     * it, including other tools on the same broker. The `topic` field is what attributes
+     * one, so anything outside our own command prefix is somebody else's problem and must
+     * not surface here as if the user's last tap had failed.
+     */
+    private fun onBridgeError(payload: String) {
+        val json = try {
+            JSONObject(payload)
+        } catch (e: JSONException) {
+            Log.w(TAG, "error payload is not JSON", e)
+            return
+        }
+        val rejected = json.optString("topic")
+        if (!rejected.startsWith(active.topics.txPrefix)) {
+            Log.i(TAG, "ignoring an error for $rejected — not one of ours")
+            return
+        }
+        val reason = json.optString("reason").ifEmpty { "the gate service refused the command" }
+        reportError("Gate service refused the command: $reason")
     }
 
     private fun parseTs(raw: String): Instant? {
@@ -583,14 +715,20 @@ object GateRepository {
             }
             if (c == null) {
                 Log.w(TAG, "sendCommand($action): not connected within ${timeoutMs}ms")
+                // The button's whole feedback channel. Without this a command that never
+                // left the phone is silent, and silence is what the user reads as "the app
+                // sent it and the gate ignored it" — the wrong half of the system to go
+                // looking in, as this bug's history shows.
+                reportError("Command not sent — no connection to the broker")
                 return false
             }
 
             val cfg = active
             val payload = JSONObject().put(cfg.topics.payloadKey, cfg.topics.nodeId).toString()
             val acked = CompletableDeferred<Boolean>()
+            val topic = cfg.topics.txPrefix + signal
             c.publishWith()
-                .topic(cfg.topics.txPrefix + signal)
+                .topic(topic)
                 .qos(qos(cfg.mqtt.qosCommand))
                 // NOT retained. hc12-web-service drops retained tx outright (its replay
                 // guard), so a retained command would be silently ignored — and without
@@ -599,13 +737,18 @@ object GateRepository {
                 .payload(payload.toByteArray())
                 .send()
                 .whenComplete { _, err ->
-                    if (err != null) Log.w(TAG, "publish $signal failed", err)
-                    else Log.i(TAG, "tx -> $signal")
+                    // The resolved topic, not just the signal name: a wrong prefix is the
+                    // one failure this line can prove or rule out at a glance, and it
+                    // carries no host and no credentials.
+                    if (err != null) Log.w(TAG, "publish $topic failed", err)
+                    else Log.i(TAG, "tx -> $topic")
                     acked.complete(err == null)
                 }
 
             val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(0)
-            return withTimeoutOrNull(remaining) { acked.await() } ?: false
+            val sent = withTimeoutOrNull(remaining) { acked.await() } ?: false
+            if (!sent) reportError("Command not sent — the broker did not accept it")
+            return sent
         } finally {
             disconnect()
         }
@@ -640,6 +783,22 @@ object GateRepository {
      * Generous, because the phone and the bridge are both plausibly a little off.
      */
     private const val FUTURE_TS_TOLERANCE_S = 300L
+
+    /**
+     * How long a command error stays on screen.
+     *
+     * Deliberately not cleared by [teardown]: a command sent with the app closed reports its
+     * failure and then immediately releases the connection, so tearing the message down with
+     * the client would erase it before anything could render it.
+     */
+    private const val ERROR_TTL_MS = 20_000L
+
+    /**
+     * How often [startWatchdog] re-checks the owners-imply-a-client invariant. Long enough
+     * to be free, short enough that a user who taps Open twice has a connection by the
+     * second tap.
+     */
+    private const val WATCHDOG_PERIOD_MS = 15_000L
 
     /** Reconnect backoff bounds — the same 1 s → 30 s the built-in reconnector used. */
     private const val INITIAL_RECONNECT_MS = 1_000L

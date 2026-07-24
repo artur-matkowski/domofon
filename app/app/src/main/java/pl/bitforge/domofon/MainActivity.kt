@@ -133,6 +133,12 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             }
             .launchIn(lifecycleScope)
 
+        // Why the last command did not reach the gate. Distinct from connectionReason: the
+        // socket can be perfectly healthy and the command still be refused by the bridge.
+        GateRepository.lastError
+            .onEach { if (qmlReady) mainQml.lastError = it }
+            .launchIn(lifecycleScope)
+
         // A new still: persist it and hand QML a fresh URL. A Bitmap cannot cross the
         // QtQuickView property bridge, so the frame travels as a file the Image loads.
         cameraGrabber.frame
@@ -185,6 +191,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         mainQml.bridgeStatus = GateRepository.bridgeStatus.value.name.lowercase()
         mainQml.connectionStatus = GateRepository.connection.value.status.name.lowercase()
         mainQml.connectionReason = GateRepository.connection.value.reason
+        mainQml.lastError = GateRepository.lastError.value
         mainQml.cameraConfigured = cameraPanelVisible(ConfigStore.current.camera.isConfigured)
         mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
         cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }

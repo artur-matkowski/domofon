@@ -27,6 +27,7 @@
     <string name="pref_rx_prefix">State topic prefix</string>
     <string name="pref_tx_prefix">Command topic prefix</string>
     <string name="pref_availability">Availability topic</string>
+    <string name="pref_error_topic">Error topic</string>
     <string name="pref_node_id">Gate node id</string>
     <string name="pref_payload_key">Command payload key</string>
 
