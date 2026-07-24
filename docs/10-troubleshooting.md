@@ -112,37 +112,54 @@ of each section.
   into the QML root, bypassing Qt's own metrics for layout. Not currently wired in.)
   Fixed 2026-07-23; verify on the real car, not the DHU — the DHU never triggered it.
 
-- **Symptom**: with a DHU (or car) session connected, opening the phone app shows a plain
-  dark rectangle — no buttons, no status line, no gear. It is *not* the mis-scale above:
-  a mis-scale renders a huge fragment of a button, this renders nothing at all. Diagnosed
+- **Symptom**: with a DHU (or car) session connected, closing the phone app and reopening
+  it either **crashes** it — and the launch after that works — or comes up as a plain dark
+  rectangle with no buttons, no status line, no gear. It is *not* the mis-scale above: a
+  mis-scale renders a huge fragment of a button, this renders nothing at all. Diagnosed
   on-device 2026-07-24.
-  **Cause**: the bound `DomofonCarAppService` keeps the app **process** alive for the whole
-  car session. Qt is one `QGuiApplication` per process, tied to the activity that first
-  loaded it, so when `MainActivity` is destroyed (back out, swipe from recents) and later
-  relaunched *into that same surviving process*, the new `QtQuickView` attaches and its
-  root window is even created — but the scene never renders and `onStatusChanged` never
-  reports `READY`. Without a car session this is invisible, because the process dies with
-  the task and every launch gets a fresh Qt runtime. Same wedge as the blank-screen entry
-  in the *Configuration / settings* section below; the car session is just a reliable way
-  to reach it.
+  **Cause**: Qt is one `QGuiApplication` per process, owned by the activity that first
+  loaded it, and **it cannot be started twice in one process**. The bound
+  `DomofonCarAppService` keeps the app process alive for the whole car session, so a
+  `MainActivity` that is destroyed (back out, swipe from recents) and relaunched lands in
+  that same process and loads Qt a second time. Usually that aborts the process outright:
+
+  ```
+  Abort message: 'JNI DETECTED ERROR IN APPLICATION: java_class == null
+      in call to IsInstanceOf
+      from void org.qtproject.qt.android.QtNative.runPendingCppRunnables()'
+  ```
+
+  — Qt's stale JNI class cache, on the main looper. When it does not abort, the
+  `QtQuickView` attaches and even creates its root window, but the scene never renders and
+  `onStatusChanged` never reports `READY`. The crash is why the *next* launch works: it
+  kills the process, so that one gets a fresh Qt runtime. Without a car session the process
+  dies with the task and none of this is reachable — which is why it looks DHU-specific.
+  Same family as the blank-screen entry in the *Configuration / settings* section below.
   **Evidence to confirm it is this and not something else** (all read-only):
-  `dumpsys activity top` shows `QtQuickView` → `QtWindow` → `QtTextureView` present and
-  correctly sized, and the activity config clean (no car-mode/density contamination), yet
-  the screen is uniform `#1e1e2e` — the wrapper `FrameLayout`'s background;
+  `adb logcat -b crash -d` shows the abort message above;
   `dumpsys activity services pl.bitforge.domofon` shows the car service bound by
   `com.google.android.projection.gearhead`; `dumpsys activity activities` shows several
-  `MainActivity` `ActivityRecord`s inside one pid, and no `QtQuickView status: READY` in
-  logcat for that pid.
-  **Fix (workaround today)**: `adb shell am force-stop pl.bitforge.domofon`, then launch.
-  Verified with the DHU still connected: the fresh process renders normally, and gearhead
-  rebinds the car service by itself. Do not bother stopping the DHU — the session is not
-  the problem, the reused process is.
-  **Proper fix (not implemented yet)**: a READY watchdog in `MainActivity` — if
-  `onStatusChanged` has not reported `READY` a couple of seconds after `loadContent`,
-  recreate the `QtQuickView` once and, failing that, restart the process from a small
-  `:restart`-process activity (a cooldown stamp in `SharedPreferences` keeps it from
-  looping). Killing the process also drops the car session for ~1 s while gearhead
-  rebinds; that only ever happens when the phone UI is already dead.
+  `MainActivity` `ActivityRecord`s inside one pid; on the blank variant `dumpsys activity
+  top` shows `QtQuickView` → `QtWindow` → `QtTextureView` present and correctly sized, with
+  a clean activity config, while the screen is uniform `#1e1e2e` — the wrapper
+  `FrameLayout`'s background — and no `QtQuickView status: READY` in logcat for that pid.
+  **Fix**: `MainActivity` refuses to load Qt twice. A process-scoped
+  `qtHostedInThisProcess` flag is set the first time it builds the view; a later instance
+  that finds it set builds nothing and hands the launch to `QtRestartActivity`, which lives
+  in its own `:restart` process, kills the main process and starts `MainActivity` again —
+  in a fresh process, where Qt loads normally. A `QtQuickView` can also stall without any
+  of this (see the blank-screen entry), so a `QML_READY_TIMEOUT_MS` watchdog takes the same
+  exit if `READY` never arrives. A `SharedPreferences` timestamp suppresses a second
+  restart within 30 s *of one that never rendered*, so a genuine loop stops at the
+  "close Domofon and open it again" fallback text; reaching `READY` clears the stamp, so
+  ordinary back-out-and-reopen cycles restart as often as they need to.
+  Manual equivalent, if you are on an older build:
+  `adb shell am force-stop pl.bitforge.domofon`, then launch.
+  **Cost, accepted**: killing the process drops the car session with it. The host rebinds
+  by itself — instantly when the gate app is what is on the car screen, otherwise the next
+  time you open it there.
+  Verified on device 2026-07-24 with the DHU connected, release build: four launches with a
+  back-out between each, three automatic restarts, every one rendered, zero crashes.
 
 ## RTSP / video
 

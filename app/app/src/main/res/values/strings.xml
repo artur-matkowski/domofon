@@ -70,4 +70,5 @@
     <string name="location_rationale_continue">Continue</string>
     <string name="location_rationale_cancel">Not now</string>
     <string name="location_needs_all_the_time">Choose “Allow all the time” so the gate can pop up as you arrive</string>
+    <string name="qt_ui_needs_restart">The gate screen could not start.\n\nClose Domofon from the recent-apps list and open it again.</string>
 </resources>

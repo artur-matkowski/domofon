@@ -59,6 +59,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Its own process on purpose: it kills the main one and must outlive it. See
+             QtRestartActivity. excludeFromRecents + noHistory so it never shows up as a
+             task the user can return to; it lives for a few milliseconds. -->
+        <activity
+            android:name=".QtRestartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:process=":restart"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay"/>
+
         <activity
             android:name=".config.SettingsActivity"
             android:exported="false"

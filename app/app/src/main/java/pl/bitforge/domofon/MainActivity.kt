@@ -7,13 +7,16 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -43,6 +46,9 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private var commandListenerId = 0
     private var settingsListenerId = 0
 
+    /** Wraps the Qt view; also the handler the QML-load watchdog is posted on. */
+    private lateinit var container: FrameLayout
+
     /**
      * Pulls camera stills over RTSP. applicationContext, not `this`: it is held for the
      * activity's whole life and outlives configuration changes, so an activity context here
@@ -60,8 +66,48 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     /** True until the first READY of a fresh launch has decided about the setup redirect. */
     private var firstRun = false
 
+    /**
+     * False when [onCreate] bailed out before building any UI, because this process has
+     * already hosted Qt. Such an instance is a placeholder waiting for a fresh process: it
+     * owns no view, no MQTT connection and no camera grabber, so every other callback has
+     * to leave it alone.
+     */
+    private var hostingQt = true
+
+    /**
+     * Fires if [onStatusChanged] has not reported READY well after [QtQuickView.loadContent].
+     * A `QtQuickView` stopped mid-load stalls forever — it does not resume when the activity
+     * comes back — and the only cure is a new process, so this is the same exit as the
+     * second-activity guard in [onCreate].
+     */
+    private val qmlWatchdog = Runnable {
+        if (qmlReady) return@Runnable
+        // Restarting from the background would be both rude and, under targetSdk 36's
+        // background-activity-launch rules, likely to be dropped on the floor.
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@Runnable
+        Log.w(TAG, "QML never reported READY — restarting into a fresh process")
+        if (!QtRestartActivity.restart(this)) showRestartFallback()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Qt is one QGuiApplication per process, owned by the activity that first loaded it.
+        // A second MainActivity in the same process gets a QtQuickView that renders nothing,
+        // and usually takes the process down first — "JNI DETECTED ERROR IN APPLICATION:
+        // java_class == null ... from QtNative.runPendingCppRunnables()", a SIGABRT out of
+        // Qt's stale JNI class cache. Normally the process dies with the task and the second
+        // activity never happens; a bound car session (DomofonCarAppService) keeps the
+        // process alive for the whole drive, which turns "swipe the app away and reopen it"
+        // into exactly this. So hand the launch to a fresh process instead of loading Qt
+        // twice. See docs/10-troubleshooting.md, Android Auto section.
+        if (qtHostedInThisProcess) {
+            Log.w(TAG, "Qt already hosted in this process — restarting into a fresh one")
+            hostingQt = false
+            if (!QtRestartActivity.restart(this)) showRestartFallback()
+            return
+        }
+        qtHostedInThisProcess = true
 
         val qtQuickView = QtQuickView(this)
 
@@ -77,7 +123,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // The QML view is padded away from the bars via a wrapper whose background matches
         // the QML root color, so the bar areas read as part of the scene instead of as a
         // differently-coloured strip.
-        val container = FrameLayout(this).apply {
+        container = FrameLayout(this).apply {
             setBackgroundColor(QML_BACKGROUND) // keep in sync with Main.qml root color
             addView(
                 qtQuickView,
@@ -111,6 +157,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
         mainQml.setStatusChangeListener(this)
         qtQuickView.loadContent(mainQml)
+        container.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
 
         // Kotlin -> QML: push every state change into the QML property.
         GateRepository.gateState
@@ -167,6 +214,16 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
     override fun onStart() {
         super.onStart()
+        if (!hostingQt) return
+
+        // The load can also stall because the activity was stopped mid-load (a launch with
+        // the screen off does it). Coming back does not resume it, so re-arm the watchdog
+        // for a window in which we are actually visible and allowed to start an activity.
+        if (!qmlReady) {
+            container.removeCallbacks(qmlWatchdog)
+            container.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
+        }
+
         GateRepository.connect()
         cameraGrabber.start()
         // Settings may have changed while we were away — including the home position or
@@ -176,6 +233,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     }
 
     override fun onStop() {
+        if (!hostingQt) {
+            super.onStop()
+            return
+        }
+        container.removeCallbacks(qmlWatchdog)
         GateRepository.disconnect()
         cameraGrabber.stop()
         super.onStop()
@@ -185,6 +247,8 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         Log.i(TAG, "QtQuickView status: $status")
         if (status != QtQmlStatus.READY || content != mainQml) return
         qmlReady = true
+        container.removeCallbacks(qmlWatchdog)
+        QtRestartActivity.clearRestartStamp(this)
 
         // Seed the view with the state we already have.
         mainQml.gateState = GateRepository.gateState.value.state
@@ -239,6 +303,24 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
      */
     private fun cameraPanelVisible(configured: Boolean) = configured && CameraFrameGrabber.ENABLED
 
+    /**
+     * Shown when the process cannot host Qt and a restart was already attempted moments ago
+     * — i.e. the restart did not take, and doing it again would be a launch loop. A plain
+     * Android view on purpose: the whole problem is that Qt cannot draw in this process.
+     */
+    private fun showRestartFallback() {
+        Log.e(TAG, "No Qt UI in this process and a restart was just tried — showing the fallback")
+        setContentView(
+            TextView(this).apply {
+                text = getString(R.string.qt_ui_needs_restart)
+                gravity = Gravity.CENTER
+                setBackgroundColor(QML_BACKGROUND)
+                setTextColor(0xFFA6ADC8.toInt()) // Main.qml's muted grey
+                setPadding(64, 64, 64, 64)
+            }
+        )
+    }
+
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
@@ -263,6 +345,20 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private companion object {
         const val TAG = "Domofon"
         const val REQ_NOTIFICATIONS = 3
+
+        /**
+         * How long the QML load may take before the view is written off as stalled. A cold
+         * start with dexopt and Qt library extraction measures well under a second on the
+         * test phone, so this is generous by design: firing early costs a process restart.
+         */
+        const val QML_READY_TIMEOUT_MS = 4_000L
+
+        /**
+         * Process-scoped, deliberately never reset: Qt cannot be started twice in one
+         * process, and once an activity has loaded it the only way back to a working UI is
+         * a new process. Survives this activity's destruction, which is the whole point.
+         */
+        var qtHostedInThisProcess = false
 
         /** Main.qml's root `color: "#1e1e2e"`. Change one and you must change both. */
         val QML_BACKGROUND = 0xFF1E1E2E.toInt()

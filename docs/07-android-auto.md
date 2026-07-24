@@ -196,11 +196,12 @@ Two rules, both of which cost an afternoon to learn (ch. 10):
 - **Run it in a terminal.** It reads console commands and exits at stdin EOF, so
   backgrounding it makes it die instantly with no window.
 
-A third one, cheaper but confusing while it lasts: an active session keeps the app
-**process** alive through the bound `CarAppService`, so relaunching the phone UI reuses a
-Qt runtime a previous `MainActivity` owned and comes up blank. `adb shell am force-stop
-pl.bitforge.domofon` before launching the phone UI; the car session rebinds by itself.
-See ch. 10, *Android Auto*.
+A third thing worth knowing: an active session keeps the app **process** alive through the
+bound `CarAppService`, and Qt cannot start twice in one process — so reopening the phone UI
+during a session used to crash it or come up blank. The app now detects that and relaunches
+itself into a fresh process (`QtRestartActivity`), which also drops and re-establishes the
+car session. Expect the head unit to blink back to the app list when you reopen the phone
+UI mid-session; that is this, working. See ch. 10, *Android Auto*.
 
 A car screen opens on your Debian desktop, projecting from the phone. Iterate here —
 it's 10× faster than walking to the car. Keyboard shortcuts and options:
