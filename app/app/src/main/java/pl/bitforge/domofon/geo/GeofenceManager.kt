@@ -16,15 +16,12 @@ import pl.bitforge.domofon.config.ConfigStore
 /**
  * The home geofence. Entering it is what surfaces the gate on the car screen.
  *
- * The position is the user's, read from [ConfigStore] — never a constant in this file. The
- * feature also defaults to *off*: background location is the most intrusive permission the
- * app asks for, and grabbing it before the user has asked for the feature is both rude and
- * the single most common reason Play rejects a location declaration.
+ * The position is the user's, read from the injected [ConfigStore] — never a constant in
+ * this file. The feature also defaults to *off*: background location is the most intrusive
+ * permission the app asks for, and grabbing it before the user has asked for the feature
+ * is both rude and the single most common reason Play rejects a location declaration.
  */
-object GeofenceManager {
-
-    const val ID = "home"
-    private const val TAG = "Domofon"
+class GeofenceManager(private val configStore: ConfigStore) {
 
     fun hasPermissions(context: Context): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -41,7 +38,7 @@ object GeofenceManager {
      */
     @SuppressLint("MissingPermission") // guarded by hasPermissions()
     fun sync(context: Context) {
-        val home = ConfigStore.current.home
+        val home = configStore.current.home
         if (!home.isUsable) {
             // Covers both "switched off" and "half-filled form": turning the feature off
             // has to actually stop the tracking, not just stop reacting to it.
@@ -95,4 +92,9 @@ object GeofenceManager {
             // names an explicit component, so only GMS can make use of it.
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
         )
+
+    companion object {
+        const val ID = "home"
+        private const val TAG = "Domofon"
+    }
 }

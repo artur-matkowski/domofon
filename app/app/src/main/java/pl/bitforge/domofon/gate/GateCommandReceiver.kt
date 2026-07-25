@@ -13,8 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
-import pl.bitforge.domofon.config.ConfigStore
-import pl.bitforge.domofon.data.mqtt.GateService
+import pl.bitforge.domofon.container
 
 /**
  * Backs the button inside the heads-up notification, so tapping *Open gate* on the car
@@ -46,7 +45,7 @@ class GateCommandReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
-                val ok = GateService.instance.sendCommandAwait(action)
+                val ok = app.container.gateService.sendCommandAwait(action)
                 Log.i(TAG, "notification action '$action' -> ${if (ok) "sent" else "FAILED"}")
                 // The dismissal above was the acknowledgement. Without this, a command that
                 // never left the phone looks exactly like one that worked.
@@ -69,7 +68,7 @@ class GateCommandReceiver : BroadcastReceiver() {
      * Re-checking here is the only place that reaches both paths.
      */
     private fun refuseWhileLocked(context: Context): Boolean {
-        if (!ConfigStore.current.requireUnlockForCommands) return false
+        if (!context.container.configStore.current.requireUnlockForCommands) return false
         val keyguard = context.getSystemService(KeyguardManager::class.java) ?: return false
         // isDeviceSecure(): with no PIN/pattern/biometric configured there is nothing to
         // unlock, so refusing would just break the feature for no gain in safety.

@@ -32,7 +32,10 @@ import pl.bitforge.domofon.config.ConfigStore
  * killed this app on every launch on the test phone. See [OffscreenTextureReader] and
  * docs/10 → `nativeCreatePlanes`.
  */
-class CameraFrameGrabber(private val context: Context) {
+class CameraFrameGrabber(
+    private val context: Context,
+    private val configStore: ConfigStore,
+) {
 
     enum class Status {
         /** Not started, or no camera configured. */
@@ -60,14 +63,14 @@ class CameraFrameGrabber(private val context: Context) {
     @Synchronized
     fun start() {
         if (rtsp != null || http != null) return
-        val camera = ConfigStore.current.camera
+        val camera = configStore.current.camera
         when {
             // The override wins when it is set: someone who filled in a snapshot URL has a
             // reason, and silently preferring the stream would make that field look broken.
             camera.hasSnapshot ->
-                http = HttpFrameSource(::emit, ::emitStatus).also { it.start() }
+                http = HttpFrameSource(configStore, ::emit, ::emitStatus).also { it.start() }
             camera.hasStream ->
-                rtsp = RtspFrameSource(context, ::emit, ::emitStatus).also { it.start() }
+                rtsp = RtspFrameSource(context, configStore, ::emit, ::emitStatus).also { it.start() }
             else -> _status.value = Status.IDLE
         }
     }

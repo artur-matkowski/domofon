@@ -25,11 +25,11 @@ import androidx.preference.SwitchPreferenceCompat
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
+import pl.bitforge.domofon.container
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.ConnectionState
 import pl.bitforge.domofon.domain.ConnectionStatus
-import pl.bitforge.domofon.geo.GeofenceManager
 
 /**
  * The settings screen. Everything the app needs to reach a gate is entered here and
@@ -85,14 +85,14 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        gateLease = GateService.instance.acquire("settings")
+        gateLease = container.gateService.acquire("settings")
     }
 
     /** Settings changes are only worth anything once they reach Play Services. */
     override fun onStop() {
         gateLease?.close()
         gateLease = null
-        GeofenceManager.sync(this)
+        container.geofenceManager.sync(this)
         super.onStop()
     }
 
@@ -142,7 +142,7 @@ class SettingsActivity : AppCompatActivity() {
             REQ_FOREGROUND -> requestBackground()
             REQ_BACKGROUND ->
                 if (granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
-                    GeofenceManager.sync(this)
+                    container.geofenceManager.sync(this)
                 } else {
                     // Android 11+ will not grant "Allow all the time" from a dialog at all;
                     // system Settings is the only place it can be turned on. Offer it —
@@ -174,27 +174,28 @@ class SettingsActivity : AppCompatActivity() {
             // Must precede inflation: the framework resolves each preference's persisted
             // value through the data store as it builds the screen, so setting this
             // afterwards would let the first read hit default SharedPreferences instead.
-            preferenceManager.preferenceDataStore = ConfigStore
+            preferenceManager.preferenceDataStore =
+                requireContext().container.newPreferenceDataStore()
             setPreferencesFromResource(R.xml.preferences, rootKey)
 
-            plainText(ConfigStore.K_HOST)
-            plainText(ConfigStore.K_USER)
-            numeric(ConfigStore.K_PORT)
-            numeric(ConfigStore.K_NODE_ID)
-            numeric(ConfigStore.K_KEEP_ALIVE)
-            numeric(ConfigStore.K_SNAPSHOT_SECS)
-            signedDecimal(ConfigStore.K_LAT)
-            signedDecimal(ConfigStore.K_LON)
-            numeric(ConfigStore.K_RADIUS)
+            plainText(ConfigKeys.HOST)
+            plainText(ConfigKeys.USER)
+            numeric(ConfigKeys.PORT)
+            numeric(ConfigKeys.NODE_ID)
+            numeric(ConfigKeys.KEEP_ALIVE)
+            numeric(ConfigKeys.SNAPSHOT_SECS)
+            signedDecimal(ConfigKeys.LAT)
+            signedDecimal(ConfigKeys.LON)
+            numeric(ConfigKeys.RADIUS)
 
-            masked(ConfigStore.K_PASS)
+            masked(ConfigKeys.PASS)
 
-            credentialUrl(ConfigStore.K_SNAPSHOT_URL, R.string.pref_snapshot_url_summary)
-            credentialUrl(ConfigStore.K_RTSP_URL, R.string.pref_rtsp_url_summary)
+            credentialUrl(ConfigKeys.SNAPSHOT_URL, R.string.pref_snapshot_url_summary)
+            credentialUrl(ConfigKeys.RTSP_URL, R.string.pref_rtsp_url_summary)
 
             // Switching the geofence on is the user asking for the feature — and the only
             // moment at which asking for background location is justified.
-            findPreference<SwitchPreferenceCompat>(ConfigStore.K_GEOFENCE)
+            findPreference<SwitchPreferenceCompat>(ConfigKeys.GEOFENCE)
                 ?.setOnPreferenceChangeListener { _, enabled ->
                     if (enabled == true) (activity as? SettingsActivity)?.startLocationFlow()
                     true
@@ -245,11 +246,12 @@ class SettingsActivity : AppCompatActivity() {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     launch {
-                        GateService.instance.connection.collect { row.summary = describe(it) }
+                        requireContext().container.gateService.connection.collect { row.summary = describe(it) }
                     }
                     launch {
                         // drop(1): the current value is what we already connected with.
-                        ConfigStore.config.drop(1).collect { GateService.instance.refresh() }
+                        requireContext().container.configStore.config.drop(1)
+                            .collect { requireContext().container.gateService.refresh() }
                     }
                 }
             }

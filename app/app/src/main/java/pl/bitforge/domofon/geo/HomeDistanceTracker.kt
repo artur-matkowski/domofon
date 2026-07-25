@@ -20,7 +20,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import pl.bitforge.domofon.config.ConfigStore
-import pl.bitforge.domofon.domain.formatHomeDistance
 import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -49,7 +48,11 @@ import kotlin.math.roundToInt
  * config is sliced so the MQTT layer never sees the user's address. Same reason nothing in
  * here is logged but the distance itself.
  */
-class HomeDistanceTracker(private val context: Context) {
+class HomeDistanceTracker(
+    private val context: Context,
+    private val configStore: ConfigStore,
+    private val geofence: GeofenceManager,
+) {
 
     /** Metres from the home geofence centre. A null [distance] value means "unavailable". */
     data class Reading(val meters: Float)
@@ -76,7 +79,7 @@ class HomeDistanceTracker(private val context: Context) {
     @Synchronized
     fun start() {
         if (scope != null) return
-        if (!ConfigStore.current.home.isUsable || !GeofenceManager.hasPermissions(context)) {
+        if (!configStore.current.home.isUsable || !geofence.hasPermissions(context)) {
             _distance.value = null
             return
         }
@@ -97,7 +100,7 @@ class HomeDistanceTracker(private val context: Context) {
 
     private suspend fun loop() {
         while (currentCoroutineContext().isActive) {
-            val home = ConfigStore.current.home
+            val home = configStore.current.home
             if (!home.isUsable) {
                 // Home was cleared or the feature switched off while we were running.
                 _distance.value = null
@@ -176,10 +179,3 @@ class HomeDistanceTracker(private val context: Context) {
     }
 }
 
-/**
- * The distance as one line — wording and zone bands live in the pure
- * [pl.bitforge.domofon.domain.formatHomeDistance]; this overload only supplies the
- * geofence radius from the current config for callers that hold a [Reading].
- */
-fun formatHomeDistance(reading: HomeDistanceTracker.Reading?): String =
-    formatHomeDistance(reading?.meters, ConfigStore.current.home.radiusMeters)

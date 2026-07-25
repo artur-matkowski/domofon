@@ -27,15 +27,20 @@ import javax.crypto.spec.GCMParameterSpec
  * a pocket during the drive home. Requiring auth here would break the one feature the
  * geofence exists for. Confirmation for *acting* on the gate is enforced separately, at
  * the notification action, by `requireUnlockForCommands`.
+ *
+ * A class with one container-owned instance; the Keystore alias underneath is per-app
+ * state either way, which is why [key] stays synchronized.
  */
-object SecretStore {
+class SecretStore {
 
-    private const val KEYSTORE = "AndroidKeyStore"
-    private const val ALIAS = "domofon.config.secrets.v1"
-    private const val TRANSFORMATION = "AES/GCM/NoPadding"
-    private const val GCM_TAG_BITS = 128
-    private const val IV_BYTES = 12
-    private const val TAG = "Domofon"
+    private companion object {
+        const val KEYSTORE = "AndroidKeyStore"
+        const val ALIAS = "domofon.config.secrets.v1"
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val GCM_TAG_BITS = 128
+        const val IV_BYTES = 12
+        const val TAG = "Domofon"
+    }
 
     /** Base64 of `iv || ciphertext`, or "" for empty input. */
     fun encrypt(plaintext: String): String {

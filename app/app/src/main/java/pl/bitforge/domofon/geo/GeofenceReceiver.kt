@@ -10,8 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import pl.bitforge.domofon.config.ConfigStore
-import pl.bitforge.domofon.data.mqtt.GateService
+import pl.bitforge.domofon.container
 import pl.bitforge.domofon.gate.GateNotifier
 
 /**
@@ -35,7 +34,7 @@ class GeofenceReceiver : BroadcastReceiver() {
 
         // Re-check the setting on every delivery: a fence registered before the user
         // switched the feature off can still be in flight inside Play Services.
-        if (!ConfigStore.current.home.isUsable) {
+        if (!app.container.configStore.current.home.isUsable) {
             Log.i(TAG, "geofence event ignored: feature disabled")
             return
         }
@@ -84,11 +83,12 @@ internal object ArrivalPopUp {
                 // phone UI was still holding; a lease closes itself at most once, and
                 // acquire() no longer throws on bad config — the transport reports failures
                 // through the connection flow instead.
-                GateService.instance.acquire("arrival").use {
+                val gate = context.container.gateService
+                gate.acquire("arrival").use {
                     // Null when the VPN is asleep or the broker is unreachable. The pop-up
                     // says so rather than not appearing at all — silence looks identical to
                     // a bug.
-                    val state = GateService.instance.awaitFreshState(STATE_TIMEOUT_MS)
+                    val state = gate.awaitFreshState(STATE_TIMEOUT_MS)
                     Log.i(TAG, "geofence pop-up with state=${state?.state ?: "unknown"}")
                     GateNotifier.notifyApproaching(context, state)
                 }

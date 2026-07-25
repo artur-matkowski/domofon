@@ -2,9 +2,7 @@ package pl.bitforge.domofon.data.mqtt
 
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,7 +10,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.DomofonConfig
 import pl.bitforge.domofon.domain.BridgeStatus
 import pl.bitforge.domofon.domain.ConnectionState
@@ -49,7 +46,7 @@ import pl.bitforge.domofon.domain.ReconnectPolicy
  */
 class GateService(
     private val transport: MqttTransport,
-    /** Snapshot of the current settings; a seam so tests never touch [ConfigStore]. */
+    /** Snapshot of the current settings; a seam so tests never touch a real settings store. */
     private val currentConfig: () -> DomofonConfig,
     private val scope: CoroutineScope,
     private val reconnectPolicy: ReconnectPolicy = ReconnectPolicy(),
@@ -500,17 +497,5 @@ class GateService(
 
         /** Whole-operation budget for [sendCommandAwait] — see the deadline note inside. */
         private const val COMMAND_TIMEOUT_MS = 8_000L
-
-        /**
-         * Interim composition until AppContainer (next step) owns the instance. Everything
-         * that used to reach the `GateRepository` object reaches this instead.
-         */
-        val instance: GateService by lazy {
-            GateService(
-                transport = HiveMqTransport(),
-                currentConfig = { ConfigStore.current },
-                scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-            )
-        }
     }
 }

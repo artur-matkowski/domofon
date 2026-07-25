@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.DomofonApp
 import pl.bitforge.domofon.MainActivity
 import pl.bitforge.domofon.R
-import pl.bitforge.domofon.data.mqtt.GateService
+import pl.bitforge.domofon.container
 import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.domain.GateState
 
@@ -41,7 +41,7 @@ object GateNotifier {
     /** Notify on every state change *after* the current one — the current state is not news. */
     fun observe(context: Context, scope: CoroutineScope) {
         val app = context.applicationContext
-        GateService.instance.gateState
+        context.container.gateService.gateState
             .drop(1)
             .onEach { notifyStateChange(app, it) }
             .launchIn(scope)

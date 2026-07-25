@@ -26,16 +26,11 @@ import org.qtproject.qt.android.QtQmlStatus
 import org.qtproject.qt.android.QtQmlStatusChangeListener
 import org.qtproject.qt.android.QtQuickView
 import org.qtproject.qt.android.QtQuickViewContent
-import pl.bitforge.domofon.camera.CameraFrameGrabber
-import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
-import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.GatePolicy
+import pl.bitforge.domofon.domain.formatHomeDistance
 import pl.bitforge.domofon.gate.GateNotifier
-import pl.bitforge.domofon.geo.GeofenceManager
-import pl.bitforge.domofon.geo.HomeDistanceTracker
-import pl.bitforge.domofon.geo.formatHomeDistance
 import java.io.File
 
 /**
@@ -51,27 +46,27 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private var commandListenerId = 0
     private var settingsListenerId = 0
 
-    private val gate get() = GateService.instance
+    private val gate get() = container.gateService
 
     /** Held from onStart to onStop — this activity's claim on the MQTT connection. */
     private var gateLease: ConnectionLease? = null
 
     /** Wraps the Qt view; also the handler the QML-load watchdog is posted on. */
-    private lateinit var container: FrameLayout
+    private lateinit var qtHost: FrameLayout
 
     /**
      * Produces camera stills. applicationContext, not `this`: it is held for the activity's
      * whole life and outlives configuration changes, so an activity context here would leak.
      * Started/stopped with the activity, like the MQTT connection.
      */
-    private val cameraGrabber by lazy { CameraFrameGrabber(applicationContext) }
+    private val cameraGrabber by lazy { container.newCameraGrabber(this) }
 
     /**
      * Live distance to the home geofence centre. applicationContext for the same reason as
      * [cameraGrabber]. Runs only while the activity is started; it stays silent unless the
      * geofence feature is on and located, so most installs never see it.
      */
-    private val homeDistanceTracker by lazy { HomeDistanceTracker(applicationContext) }
+    private val homeDistanceTracker by lazy { container.newHomeDistanceTracker(this) }
 
     /** Bumped per frame; its parity picks the cache file, so the URL alternates. See [writeFrame]. */
     private var frameVersion = 0
@@ -140,7 +135,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // The QML view is padded away from the bars via a wrapper whose background matches
         // the QML root color, so the bar areas read as part of the scene instead of as a
         // differently-coloured strip.
-        container = FrameLayout(this).apply {
+        qtHost = FrameLayout(this).apply {
             setBackgroundColor(QML_BACKGROUND) // keep in sync with Main.qml root color
             addView(
                 qtQuickView,
@@ -150,7 +145,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
                 ),
             )
         }
-        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(qtHost) { v, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
@@ -165,7 +160,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         }
 
         setContentView(
-            container,
+            qtHost,
             ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -174,7 +169,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
         mainQml.setStatusChangeListener(this)
         qtQuickView.loadContent(mainQml)
-        container.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
+        qtHost.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
 
         // Kotlin -> QML: one status line, derived in the backend so the phone and the car
         // word it identically (see gateStatusLine). Combined from the three flows that feed
@@ -207,13 +202,16 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
         // Whether a camera is configured at all decides if the QML panel appears. Driven off
         // config so entering the URL in Settings shows the panel without a relaunch.
-        ConfigStore.config
+        container.configStore.config
             .onEach { if (qmlReady) mainQml.cameraConfigured = it.camera.hasPicture }
             .launchIn(lifecycleScope)
 
         // Distance to home. Empty string when the tracker has nothing, which hides the line.
         homeDistanceTracker.distance
-            .onEach { if (qmlReady) mainQml.homeDistance = formatHomeDistance(it) }
+            .onEach {
+                if (qmlReady) mainQml.homeDistance =
+                    formatHomeDistance(it?.meters, container.configStore.current.home.radiusMeters)
+            }
             .launchIn(lifecycleScope)
 
         GateNotifier.observe(this, lifecycleScope)
@@ -234,15 +232,15 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // the screen off does it). Coming back does not resume it, so re-arm the watchdog
         // for a window in which we are actually visible and allowed to start an activity.
         if (!qmlReady) {
-            container.removeCallbacks(qmlWatchdog)
-            container.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
+            qtHost.removeCallbacks(qmlWatchdog)
+            qtHost.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
         }
 
         gateLease = gate.acquire("phone-ui")
         cameraGrabber.start()
         // Settings may have changed while we were away — including the home position or
         // the geofence toggle.
-        GeofenceManager.sync(this)
+        container.geofenceManager.sync(this)
         // Re-evaluates the feature/permission guards, so enabling the geofence in Settings and
         // coming back starts the readout without a relaunch.
         homeDistanceTracker.start()
@@ -254,7 +252,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             super.onStop()
             return
         }
-        container.removeCallbacks(qmlWatchdog)
+        qtHost.removeCallbacks(qmlWatchdog)
         gateLease?.close()
         gateLease = null
         cameraGrabber.stop()
@@ -266,7 +264,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         Log.i(TAG, "QtQuickView status: $status")
         if (status != QtQmlStatus.READY || content != mainQml) return
         qmlReady = true
-        container.removeCallbacks(qmlWatchdog)
+        qtHost.removeCallbacks(qmlWatchdog)
         QtRestartActivity.clearRestartStamp(this)
 
         // Seed the view with the state we already have.
@@ -276,10 +274,13 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             gate.gateState.value.state,
         )
         mainQml.lastError = gate.lastError.value
-        mainQml.cameraConfigured = ConfigStore.current.camera.hasPicture
+        mainQml.cameraConfigured = container.configStore.current.camera.hasPicture
         mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
         cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }
-        mainQml.homeDistance = formatHomeDistance(homeDistanceTracker.distance.value)
+        mainQml.homeDistance = formatHomeDistance(
+            homeDistanceTracker.distance.value?.meters,
+            container.configStore.current.home.radiusMeters,
+        )
 
         // QML -> Kotlin: the generated connect<Signal>Listener returns an id you can use
         // to disconnect later. The first lambda argument is the signal name.
@@ -297,7 +298,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // The first-run setup redirect, deferred here from onCreate: the scene is loaded
         // now, so covering the activity can no longer strand the load. Cleared so a
         // re-emitted READY cannot re-open Settings over whatever the user is doing.
-        if (firstRun && !ConfigStore.current.isComplete) {
+        if (firstRun && !container.configStore.current.isComplete) {
             firstRun = false
             startActivity(Intent(this, SettingsActivity::class.java))
         }

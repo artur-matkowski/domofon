@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import pl.bitforge.domofon.container
 
 /**
  * Geofences do not survive a reboot; nothing re-registers them but this.
@@ -17,6 +18,6 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         Log.i("Domofon", "boot completed — restoring geofence")
-        GeofenceManager.sync(context.applicationContext)
+        context.container.geofenceManager.sync(context.applicationContext)
     }
 }

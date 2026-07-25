@@ -9,11 +9,9 @@ import androidx.car.app.validation.HostValidator
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import pl.bitforge.domofon.camera.CameraFrameGrabber
+import pl.bitforge.domofon.container
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
-import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.gate.GateNotifier
-import pl.bitforge.domofon.geo.HomeDistanceTracker
 
 class DomofonCarAppService : CarAppService() {
 
@@ -45,17 +43,17 @@ class DomofonCarAppService : CarAppService() {
 
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent): Screen {
-            // The session owns the frame grabber the way it owns its MQTT slot. START/STOP
+            // The session owns the frame grabber the way it owns its MQTT lease. START/STOP
             // rather than create/destroy: a backgrounded car app must not keep fetching
             // stills over the VPN for a screen nobody is looking at.
             // Carries the still *and* the gate audio (one RTSP session, gated by the Camera
             // audio setting) — hearing the gate while driving is the point of this on the car.
-            val grabber = CameraFrameGrabber(carContext)
+            val grabber = carContext.container.newCameraGrabber(carContext)
 
             // Distance to home, started and stopped with the session exactly like the
             // grabber: a backgrounded car app must not keep pulling location for a screen
             // nobody is looking at. Silent unless the geofence feature is on and located.
-            val distanceTracker = HomeDistanceTracker(carContext)
+            val distanceTracker = carContext.container.newHomeDistanceTracker(carContext)
 
             // Observer first, then acquire. Registering afterwards leaks the lease for good
             // if the host tears the session down in between — after which the connection is
@@ -81,7 +79,7 @@ class DomofonCarAppService : CarAppService() {
             )
 
             // An active Android Auto session is one of the three MQTT holders (ch. 06).
-            lease = GateService.instance.acquire("car-session")
+            lease = carContext.container.gateService.acquire("car-session")
             GateNotifier.observe(carContext, lifecycleScope)
 
             return GateScreen(carContext, grabber, distanceTracker)

@@ -54,6 +54,7 @@ import pl.bitforge.domofon.config.ConfigStore
 @androidx.annotation.OptIn(UnstableApi::class)
 class RtspFrameSource(
     private val context: Context,
+    private val configStore: ConfigStore,
     private val onFrame: (Bitmap) -> Unit,
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
 ) {
@@ -114,7 +115,7 @@ class RtspFrameSource(
     private fun startAttempt() {
         val h = handler ?: return
         if (!started || player != null) return
-        val url = ConfigStore.current.camera.rtspUrl
+        val url = configStore.current.camera.rtspUrl
         if (url.isBlank()) {
             onStatus(CameraFrameGrabber.Status.IDLE)
             return
@@ -141,7 +142,7 @@ class RtspFrameSource(
         // what this camera refuses — see the class note). Read fresh so the setting lands on
         // the next connect; the track is disabled outright when off, so a muted stream decodes
         // no audio at all.
-        val audio = ConfigStore.current.camera.audioEnabled
+        val audio = configStore.current.camera.audioEnabled
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !audio)
             .build()
@@ -203,7 +204,7 @@ class RtspFrameSource(
         // decoder produces every frame regardless; `capture` only decides whether this one
         // becomes a Bitmap. Skipping the call entirely would stall the decoder — the buffer
         // has to be returned either way.
-        val snapshotMs = ConfigStore.current.camera.snapshotSecs * 1000L
+        val snapshotMs = configStore.current.camera.snapshotSecs * 1000L
         val capture = !streaming || now - lastSnapshotAt >= snapshotMs
 
         val size = p.videoSize

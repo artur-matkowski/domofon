@@ -22,9 +22,9 @@ import android.util.Log
  * background-activity-launch rules. Here the start comes from a foreground activity that is
  * very much alive.
  *
- * Note that this process runs [DomofonApp.onCreate] too — that is harmless: it only
- * initialises [pl.bitforge.domofon.config.ConfigStore] and declares notification channels.
- * Nothing here may touch `GateRepository`, which would build a second MQTT client.
+ * Note that this process runs [DomofonApp.onCreate] too — that is harmless: it builds the
+ * [AppContainer] (config store, idle service objects) and declares notification channels.
+ * Nothing here may *acquire* from `GateService`, which would open a second MQTT connection.
  */
 class QtRestartActivity : Activity() {
 

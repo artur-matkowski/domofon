@@ -3,17 +3,21 @@ package pl.bitforge.domofon
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import pl.bitforge.domofon.config.ConfigStore
 
 class DomofonApp : Application() {
+
+    /**
+     * Built on first touch, which happens right below — before any component can run.
+     * Constructing [AppContainer] constructs ConfigStore, preserving the old guarantee
+     * that every entry point (the activity, the car session, both receivers) can read the
+     * config synchronously the moment it exists.
+     */
+    val container: AppContainer by lazy { AppContainer(this) }
 
     override fun onCreate() {
         super.onCreate()
 
-        // Before anything else: every entry point — the activity, the car session, both
-        // receivers — reads ConfigStore.current synchronously, and Application.onCreate is
-        // the one place guaranteed to run before any of them.
-        ConfigStore.init(this)
+        container
 
         val nm = getSystemService(NotificationManager::class.java)
 

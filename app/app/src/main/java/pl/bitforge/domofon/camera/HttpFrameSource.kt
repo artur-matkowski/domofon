@@ -35,6 +35,7 @@ import kotlin.coroutines.coroutineContext
  * people who know their camera's firmware — see docs/04 §1.
  */
 class HttpFrameSource(
+    private val configStore: ConfigStore,
     private val onFrame: (Bitmap) -> Unit,
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
 ) {
@@ -62,7 +63,7 @@ class HttpFrameSource(
         while (coroutineContext.isActive) {
             // Read per iteration, so an edit in Settings takes effect on the next fetch
             // rather than at the next start().
-            val camera = ConfigStore.current.camera
+            val camera = configStore.current.camera
             if (camera.snapshotUrl.isBlank()) {
                 onStatus(CameraFrameGrabber.Status.IDLE)
                 delay(RETRY_MS)
