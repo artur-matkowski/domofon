@@ -16,9 +16,13 @@ qt_add_executable(domofon
     main.cpp
 )
 
+# Theme.qml is a `pragma Singleton`; CMake must declare it as one or the engine treats it
+# as an instantiable type and every `Theme.` reference fails at runtime.
+set_source_files_properties(Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(domofon
     URI DomofonQml
-    QML_FILES Main.qml
+    QML_FILES Main.qml Theme.qml
 )
 
 target_link_libraries(domofon

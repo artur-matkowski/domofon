@@ -25,6 +25,7 @@ import org.qtproject.qt.android.QtQuickViewContent
 import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
 import pl.bitforge.domofon.ui.phone.FrameFileStore
+import pl.bitforge.domofon.ui.phone.PhoneTheme
 import pl.bitforge.domofon.ui.phone.QmlGateBinder
 
 /**
@@ -126,7 +127,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // the QML root color, so the bar areas read as part of the scene instead of as a
         // differently-coloured strip.
         qtHost = FrameLayout(this).apply {
-            setBackgroundColor(QML_BACKGROUND) // keep in sync with Main.qml root color
+            setBackgroundColor(PhoneTheme.BASE) // Theme.qml `base` — the QML root color
             addView(
                 qtQuickView,
                 ViewGroup.LayoutParams(
@@ -253,8 +254,8 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             TextView(this).apply {
                 text = getString(R.string.qt_ui_needs_restart)
                 gravity = Gravity.CENTER
-                setBackgroundColor(QML_BACKGROUND)
-                setTextColor(0xFFA6ADC8.toInt()) // Main.qml's muted grey
+                setBackgroundColor(PhoneTheme.BASE)
+                setTextColor(PhoneTheme.MUTED)
                 setPadding(64, 64, 64, 64)
             }
         )
@@ -298,9 +299,6 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
          * a new process. Survives this activity's destruction, which is the whole point.
          */
         var qtHostedInThisProcess = false
-
-        /** Main.qml's root `color: "#1e1e2e"`. Change one and you must change both. */
-        val QML_BACKGROUND = 0xFF1E1E2E.toInt()
 
         /** Process-scoped: enough to stop a start-activity loop nagging the user. */
         var askedForNotifications = false

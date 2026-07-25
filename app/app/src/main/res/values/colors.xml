@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The plate behind the adaptive launcher icon. Same value as the QML scene background
-         (Main.qml) and MainActivity.QML_BACKGROUND, so the icon and the app it opens are
-         the same colour. It exists at all because the icon art is white: on the legacy
-         path the launcher composited it onto a white shim and the gate vanished. -->
+    <!-- The plate behind the adaptive launcher icon. The `base` token of the shared
+         palette (canonical table: docs wiki, ui-qml-contract page; also Theme.qml and
+         PhoneTheme.BASE), so the icon and the app it opens are the same colour. It exists
+         at all because the icon art is white: on the legacy path the launcher composited
+         it onto a white shim and the gate vanished. -->
     <color name="ic_launcher_background">#1E1E2E</color>
 </resources>

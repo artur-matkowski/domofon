@@ -5,7 +5,7 @@ import QtQuick.Controls
 // contract. Keep it small and explicit; later chapters add the camera view here.
 Rectangle {
     id: root
-    color: "#1e1e2e"
+    color: Theme.base
 
     // Kotlin -> QML. The single gate/connection status line, already composed by the backend
     // (GateRepository, via gateStatusLine) so the phone and the Android Auto screen word it
@@ -73,7 +73,7 @@ Rectangle {
             width: parent.width
             height: root.cameraConfigured ? width * 9 / 16 : 0
             visible: root.cameraConfigured
-            color: "#11111a"
+            color: Theme.surface
             radius: root.unit
             clip: true
 
@@ -127,7 +127,7 @@ Rectangle {
                 anchors.centerIn: parent
                 visible: root.cameraFrame === ""
                 text: root.cameraStatus === "error" ? "Camera unreachable" : "Connecting…"
-                color: "#a6adc8"
+                color: Theme.muted
                 font.pixelSize: root.unit * 4
             }
         }
@@ -137,7 +137,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             visible: root.statusText !== ""
             text: root.statusText
-            color: "white"
+            color: Theme.text
             font.pixelSize: root.unit * 9
             font.bold: true
             wrapMode: Text.WordWrap
@@ -151,7 +151,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             visible: root.homeDistance !== ""
             text: root.homeDistance
-            color: "#a6adc8"
+            color: Theme.muted
             font.pixelSize: root.unit * 4
         }
 
@@ -164,7 +164,7 @@ Rectangle {
             wrapMode: Text.WordWrap
             visible: root.lastError !== ""
             text: root.lastError
-            color: "#f38ba8"
+            color: Theme.error
             font.pixelSize: root.unit * 4
             bottomPadding: root.unit * 2
         }

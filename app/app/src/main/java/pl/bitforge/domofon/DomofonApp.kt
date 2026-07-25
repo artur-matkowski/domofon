@@ -30,15 +30,14 @@ class DomofonApp : Application() {
                 .apply { description = "Gate state changes" }
         )
 
-        // Reserved for the foreground service in ch. 06; deliberately low-profile.
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_SERVICE, "Gate watcher", NotificationManager.IMPORTANCE_LOW)
-                .apply { description = "Ongoing connection while near home" }
-        )
+        // The "Gate watcher" channel was reserved for a foreground service that was never
+        // built (Play dropped geofencing as a location-FGS use case; the sketch is a
+        // recorded dead end). Deleting removes the dead entry from the app's notification
+        // settings on installs that already created it; a no-op on fresh installs.
+        nm.deleteNotificationChannel("gate_service")
     }
 
     companion object {
         const val CHANNEL_EVENTS = "gate_events"
-        const val CHANNEL_SERVICE = "gate_service"
     }
 }
