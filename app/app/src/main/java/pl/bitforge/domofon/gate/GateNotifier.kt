@@ -8,19 +8,16 @@ import android.content.Intent
 import androidx.car.app.notification.CarAppExtender
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.DomofonApp
 import pl.bitforge.domofon.MainActivity
 import pl.bitforge.domofon.R
-import pl.bitforge.domofon.container
 import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.domain.GateState
 
 /**
- * Turns gate state into heads-up notifications.
+ * Renders gate state into heads-up notifications — a stateless renderer; *when* to post is
+ * its callers' business (`GateEventNotifier` for state changes, the arrival flow, the
+ * command receiver's failure path).
  *
  * The [CarAppExtender] is the whole trick behind "pop up while I'm driving": Android Auto
  * cannot be forced to open an app, but a high-importance notification carrying this
@@ -28,24 +25,7 @@ import pl.bitforge.domofon.domain.GateState
  * action button on it is as close to "one tap from Maps" as the platform allows — see
  * docs/07.
  */
-object GateNotifier {
-
-    private const val NOTIF_ID_EVENT = 1001
-
-    /** Separate id from [NOTIF_ID_EVENT]: an arrival pop-up must not silently replace it. */
-    private const val NOTIF_ID_GEOFENCE = 1002
-
-    /** A third id, so a failure report never overwrites the thing that failed. */
-    private const val NOTIF_ID_FAILURE = 1003
-
-    /** Notify on every state change *after* the current one — the current state is not news. */
-    fun observe(context: Context, scope: CoroutineScope) {
-        val app = context.applicationContext
-        context.container.gateService.gateState
-            .drop(1)
-            .onEach { notifyStateChange(app, it) }
-            .launchIn(scope)
-    }
+class GateNotifier {
 
     fun notifyStateChange(context: Context, gs: GateState) {
         if (gs.state == GatePolicy.STATE_UNKNOWN) return // disconnect reset, not news
@@ -160,5 +140,15 @@ object GateNotifier {
         }
 
         manager.notify(notifId, builder.extend(carExtender.build()).build())
+    }
+
+    private companion object {
+        const val NOTIF_ID_EVENT = 1001
+
+        /** Separate id from [NOTIF_ID_EVENT]: an arrival pop-up must not silently replace it. */
+        const val NOTIF_ID_GEOFENCE = 1002
+
+        /** A third id, so a failure report never overwrites the thing that failed. */
+        const val NOTIF_ID_FAILURE = 1003
     }
 }

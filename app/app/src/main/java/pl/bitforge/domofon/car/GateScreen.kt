@@ -22,31 +22,29 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.R
-import pl.bitforge.domofon.camera.CameraFrameGrabber
-import pl.bitforge.domofon.container
-import pl.bitforge.domofon.data.mqtt.GateService
-import pl.bitforge.domofon.domain.GatePolicy
-import pl.bitforge.domofon.domain.formatHomeDistance
-import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.ui.shared.GateUiState
+import pl.bitforge.domofon.ui.shared.GateViewModel
 
 /**
- * The car screen. Note what is absent: no MQTT, no state parsing — the same
- * [GateService] the phone UI uses drives this too. Android Auto renders only Car App
- * Library templates, so this is a grid (or a pane, when a camera is configured), not QML.
+ * The car screen. Note what is absent: no MQTT, no state parsing, no policy — the same
+ * [GateViewModel] shape the phone UI renders drives this too. Android Auto renders only
+ * Car App Library templates, so this is a grid (or a pane, when a camera is configured),
+ * not QML.
  *
- * Two buttons: the state-dependent one — [GatePolicy.primaryAction], Open or Close but
- * never both, the same call the heads-up notification makes so the two can never contradict
- * each other — and Stop, which is unconditional because a gate you want halted is a gate
- * you want halted whatever it thinks it is doing. The phone's third button is that same
- * pair plus the redundant half of Open/Close; the car cannot hold three anyway, as a Pane
- * takes at most two actions (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`). The arrival
- * notification stays at one button — a driver reaching for a heads-up needs one target.
+ * Two buttons: the state-dependent one — [GateUiState.primaryAction], Open or Close but
+ * never both, the same value the heads-up notification derives so the two can never
+ * contradict each other — and Stop, which is unconditional because a gate you want halted
+ * is a gate you want halted whatever it thinks it is doing. The phone's third button is
+ * that same pair plus the redundant half of Open/Close; the car cannot hold three anyway,
+ * as a Pane takes at most two actions (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`).
+ * The arrival notification stays at one button — a driver reaching for a heads-up needs
+ * one target.
  *
  * With a camera configured the template is a [PaneTemplate]: the pane image is the only
- * template slot that renders a large bitmap, and [CameraFrameGrabber] feeds it a fresh
- * still every few seconds. Which template we build depends only on *configuration* — never
- * on fetch health — so the type cannot flip mid-session; an unreachable camera degrades to
- * the last good frame or a placeholder icon inside the same pane.
+ * template slot that renders a large bitmap, and the session's camera grabber feeds it a
+ * fresh still every few seconds. Which template we build depends only on *configuration* —
+ * never on fetch health — so the type cannot flip mid-session; an unreachable camera
+ * degrades to the last good frame or a placeholder icon inside the same pane.
  *
  * There is deliberately **no setup here**. Play's car app quality rules (IT-1) allow a
  * smart-home app to show device state and offer simple one-touch control while driving,
@@ -56,12 +54,8 @@ import pl.bitforge.domofon.geo.HomeDistanceTracker
  */
 class GateScreen(
     carContext: CarContext,
-    private val grabber: CameraFrameGrabber,
-    private val distanceTracker: HomeDistanceTracker,
+    private val viewModel: GateViewModel,
 ) : Screen(carContext) {
-
-    private val gate = carContext.container.gateService
-    private val configStore = carContext.container.configStore
 
     init {
         observeState()
@@ -70,97 +64,62 @@ class GateScreen(
     /** Its own function only so the [FlowPreview] opt-in for `debounce` stays this narrow. */
     @OptIn(FlowPreview::class)
     private fun observeState() {
-        // Redraw on state changes, on the service going away, on the user finishing setup
-        // on the phone while the car session is already open — and on a new camera frame or
-        // distance reading. Both arrive at most once every several seconds (the grabber's
-        // snapshot interval; the tracker's ≥10 s cadence), so the invalidate rate stays well
-        // inside host etiquette.
+        // Redraw whenever the derived state or the camera frame moves — the ViewModel has
+        // already folded the seven backend flows into these two. Both are naturally slow
+        // (state changes; the grabber's snapshot cadence), so the invalidate rate stays
+        // well inside host etiquette.
         //
-        // debounce, because these seven are independent: a snapshot landing in the same
-        // moment as a distance reading used to push two templates back to back. The host
-        // counts non-refresh templates against a per-step quota and animates between them,
-        // so a burst is both wasteful and visible; 150 ms folds one round of them together
+        // debounce, because the two are independent: a snapshot landing in the same moment
+        // as a state change used to push two templates back to back. The host counts
+        // non-refresh templates against a per-step quota and animates between them, so a
+        // burst is both wasteful and visible; 150 ms folds one round of them together
         // without being noticeable on a button press.
-        listOf(
-            gate.gateState,
-            gate.bridgeStatus,
-            gate.connection,
-            gate.lastError,
-            configStore.config,
-            grabber.frame,
-            distanceTracker.distance,
-        )
-            .merge()
+        merge(viewModel.uiState, viewModel.frame)
             .debounce(INVALIDATE_DEBOUNCE_MS)
             .onEach { invalidate() }
             .launchIn(lifecycleScope)
     }
 
     override fun onGetTemplate(): Template {
-        if (!configStore.current.isComplete) {
+        val state = viewModel.uiState.value
+
+        if (!state.configComplete) {
             return MessageTemplate.Builder(carContext.getString(R.string.not_configured_car))
                 .setTitle(carContext.getString(R.string.not_configured_title))
                 .setHeaderAction(Action.APP_ICON)
                 .build()
         }
 
-        val state = gate.gateState.value.state
-        val primary = GatePolicy.primaryAction(state)
-
-        // The status line is derived once, in the backend, and rendered verbatim here and on
-        // the phone — see [GatePolicy.gateStatusLine] for why the wording lives in one place.
-        val statusLine = GatePolicy.gateStatusLine(
-            gate.connection.value,
-            gate.bridgeStatus.value,
-            state,
-        )
-
-        // Why the last command did not reach the gate, kept as its own string — identical to
-        // the phone's error line — rather than folded into the status.
-        val error = gate.lastError.value
-
-        // "" whenever the tracker has nothing (feature off, not granted, no fix yet).
-        val distanceText = formatHomeDistance(
-            distanceTracker.distance.value?.meters,
-            configStore.current.home.radiusMeters,
-        )
-
-        // Same gate as the phone panel: no snapshot URL, no frame coming, and the camera
-        // template would be a permanent empty placeholder on the head unit.
-        return if (configStore.current.camera.hasPicture) {
-            cameraTemplate(statusLine, error, distanceText, primary.label, primary.action)
+        // Same gate as the phone panel: no camera configured, no frame coming, and the
+        // camera template would be a permanent empty placeholder on the head unit.
+        return if (state.cameraConfigured) {
+            cameraTemplate(state)
         } else {
-            gridTemplate(statusLine, error, distanceText, primary.label, primary.action)
+            gridTemplate(state)
         }
     }
 
     /** The camera-less layout: the two gate buttons as grid cells. */
-    private fun gridTemplate(
-        statusLine: String,
-        error: String,
-        distanceText: String,
-        label: String,
-        action: String,
-    ): Template {
+    private fun gridTemplate(state: GateUiState): Template {
         val primaryButton = GridItem.Builder()
-            .setTitle(label)
+            .setTitle(state.primaryAction.label)
             // IMAGE_TYPE_ICON rather than the default LARGE: only an icon is tinted, and the
             // tint is the whole point (see [themedIcon]).
-            .setImage(themedIcon(primaryIconRes(action)), GridItem.IMAGE_TYPE_ICON)
-            .setOnClickListener { gate.sendCommand(action) }
+            .setImage(themedIcon(primaryIconRes(state.primaryAction.action)), GridItem.IMAGE_TYPE_ICON)
+            .setOnClickListener { viewModel.send(state.primaryAction.action) }
             .build()
 
         val stopButton = GridItem.Builder()
             .setTitle(STOP_LABEL)
             .setImage(themedIcon(R.drawable.ic_gate_stop), GridItem.IMAGE_TYPE_ICON)
-            .setOnClickListener { gate.sendCommand(STOP_ACTION) }
+            .setOnClickListener { viewModel.send(STOP_ACTION) }
             .build()
 
         // A GridTemplate has no free text row: a refused command outranks the status — the
         // driver needs to know their tap did nothing — and distance folds into the header.
-        val heading = error.ifEmpty { statusLine }
+        val heading = state.lastError.ifEmpty { state.statusText }
         return GridTemplate.Builder()
-            .setTitle(if (distanceText.isEmpty()) heading else "$heading · $distanceText")
+            .setTitle(if (state.homeDistance.isEmpty()) heading else "$heading · ${state.homeDistance}")
             .setHeaderAction(Action.APP_ICON)
             .setSingleList(
                 ItemList.Builder().addItem(primaryButton).addItem(stopButton).build()
@@ -169,14 +128,8 @@ class GateScreen(
     }
 
     /** Camera configured: pane with the latest still and the gate buttons beneath it. */
-    private fun cameraTemplate(
-        statusLine: String,
-        error: String,
-        distanceText: String,
-        label: String,
-        action: String,
-    ): Template {
-        val frame = grabber.frame.value
+    private fun cameraTemplate(state: GateUiState): Template {
+        val frame = viewModel.frame.value
         val image =
             if (frame != null) CarIcon.Builder(IconCompat.createWithBitmap(frame)).build()
             else themedIcon(R.drawable.ic_camera_off)
@@ -190,12 +143,12 @@ class GateScreen(
         // error and the distance off it as text lines (a pane row allows two), leaving the
         // fresh bitmap as the only difference between one snapshot and the next.
         val row = Row.Builder()
-            .setTitle(statusLine)
+            .setTitle(state.statusText)
             .apply {
                 // A refused command outranks distance: the driver needs to know their tap
                 // did nothing more than they need to know how far away they are.
-                if (error.isNotEmpty()) addText(error)
-                if (distanceText.isNotEmpty()) addText(distanceText)
+                if (state.lastError.isNotEmpty()) addText(state.lastError)
+                if (state.homeDistance.isNotEmpty()) addText(state.homeDistance)
             }
             .build()
 
@@ -204,16 +157,16 @@ class GateScreen(
             .addRow(row)
             .addAction(
                 Action.Builder()
-                    .setTitle(label)
-                    .setIcon(themedIcon(primaryIconRes(action)))
-                    .setOnClickListener { gate.sendCommand(action) }
+                    .setTitle(state.primaryAction.label)
+                    .setIcon(themedIcon(primaryIconRes(state.primaryAction.action)))
+                    .setOnClickListener { viewModel.send(state.primaryAction.action) }
                     .build()
             )
             .addAction(
                 Action.Builder()
                     .setTitle(STOP_LABEL)
                     .setIcon(themedIcon(R.drawable.ic_gate_stop))
-                    .setOnClickListener { gate.sendCommand(STOP_ACTION) }
+                    .setOnClickListener { viewModel.send(STOP_ACTION) }
                     .build()
             )
             .build()

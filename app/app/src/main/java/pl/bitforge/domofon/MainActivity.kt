@@ -3,7 +3,6 @@ package pl.bitforge.domofon
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -18,9 +17,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import org.qtproject.example.domofon.DomofonQml.Main
 import org.qtproject.qt.android.QtQmlStatus
 import org.qtproject.qt.android.QtQmlStatusChangeListener
@@ -28,10 +24,8 @@ import org.qtproject.qt.android.QtQuickView
 import org.qtproject.qt.android.QtQuickViewContent
 import pl.bitforge.domofon.config.SettingsActivity
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
-import pl.bitforge.domofon.domain.GatePolicy
-import pl.bitforge.domofon.domain.formatHomeDistance
-import pl.bitforge.domofon.gate.GateNotifier
-import java.io.File
+import pl.bitforge.domofon.ui.phone.FrameFileStore
+import pl.bitforge.domofon.ui.phone.QmlGateBinder
 
 /**
  * Hosts the QML UI inside a normal Kotlin activity via [QtQuickView].
@@ -43,10 +37,6 @@ import java.io.File
 class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
     private val mainQml = Main()
-    private var commandListenerId = 0
-    private var settingsListenerId = 0
-
-    private val gate get() = container.gateService
 
     /** Held from onStart to onStop — this activity's claim on the MQTT connection. */
     private var gateLease: ConnectionLease? = null
@@ -55,25 +45,25 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private lateinit var qtHost: FrameLayout
 
     /**
-     * Produces camera stills. applicationContext, not `this`: it is held for the activity's
-     * whole life and outlives configuration changes, so an activity context here would leak.
-     * Started/stopped with the activity, like the MQTT connection.
+     * Produces camera stills (the factory hands it applicationContext, so nothing here
+     * leaks the activity). Started/stopped with the activity, like the MQTT lease.
      */
     private val cameraGrabber by lazy { container.newCameraGrabber(this) }
 
     /**
-     * Live distance to the home geofence centre. applicationContext for the same reason as
-     * [cameraGrabber]. Runs only while the activity is started; it stays silent unless the
-     * geofence feature is on and located, so most installs never see it.
+     * Live distance to the home geofence centre. Runs only while the activity is started;
+     * it stays silent unless the geofence feature is on and located, so most installs
+     * never see it.
      */
     private val homeDistanceTracker by lazy { container.newHomeDistanceTracker(this) }
 
-    /** Bumped per frame; its parity picks the cache file, so the URL alternates. See [writeFrame]. */
-    private var frameVersion = 0
+    /** Derives everything the UI renders; shared shape with the car screen. */
+    private val viewModel by lazy {
+        container.newGateViewModel(lifecycleScope, cameraGrabber, homeDistanceTracker)
+    }
 
-    /** Setting a QML property before the view reports READY is a no-op at best. */
-    @Volatile
-    private var qmlReady = false
+    /** The one writer of the QML surface; created in onCreate, closed in onDestroy. */
+    private var binder: QmlGateBinder? = null
 
     /** True until the first READY of a fresh launch has decided about the setup redirect. */
     private var firstRun = false
@@ -93,7 +83,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
      * second-activity guard in [onCreate].
      */
     private val qmlWatchdog = Runnable {
-        if (qmlReady) return@Runnable
+        if (binder?.ready == true) return@Runnable
         // Restarting from the background would be both rude and, under targetSdk 36's
         // background-activity-launch rules, likely to be dropped on the floor.
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@Runnable
@@ -171,50 +161,16 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         qtQuickView.loadContent(mainQml)
         qtHost.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
 
-        // Kotlin -> QML: one status line, derived in the backend so the phone and the car
-        // word it identically (see gateStatusLine). Combined from the three flows that feed
-        // it — our own socket, the bridge, and the gate state — so a change in any one
-        // recomputes the single line the QML renders verbatim.
-        combine(
-            gate.gateState,
-            gate.bridgeStatus,
-            gate.connection,
-        ) { gs, bridge, conn -> GatePolicy.gateStatusLine(conn, bridge, gs.state) }
-            .onEach { if (qmlReady) mainQml.statusText = it }
-            .launchIn(lifecycleScope)
-
-        // Why the last command did not reach the gate. Distinct from the connection reason
-        // folded into the status line: the socket can be perfectly healthy and the command
-        // still be refused by the bridge, so this stays its own line.
-        gate.lastError
-            .onEach { if (qmlReady) mainQml.lastError = it }
-            .launchIn(lifecycleScope)
-
-        // A new still: persist it and hand QML a fresh URL. A Bitmap cannot cross the
-        // QtQuickView property bridge, so the frame travels as a file the Image loads.
-        cameraGrabber.frame
-            .onEach { bitmap -> if (qmlReady && bitmap != null) mainQml.cameraFrame = writeFrame(bitmap) }
-            .launchIn(lifecycleScope)
-
-        cameraGrabber.status
-            .onEach { if (qmlReady) mainQml.cameraStatus = it.name.lowercase() }
-            .launchIn(lifecycleScope)
-
-        // Whether a camera is configured at all decides if the QML panel appears. Driven off
-        // config so entering the URL in Settings shows the panel without a relaunch.
-        container.configStore.config
-            .onEach { if (qmlReady) mainQml.cameraConfigured = it.camera.hasPicture }
-            .launchIn(lifecycleScope)
-
-        // Distance to home. Empty string when the tracker has nothing, which hides the line.
-        homeDistanceTracker.distance
-            .onEach {
-                if (qmlReady) mainQml.homeDistance =
-                    formatHomeDistance(it?.meters, container.configStore.current.home.radiusMeters)
-            }
-            .launchIn(lifecycleScope)
-
-        GateNotifier.observe(this, lifecycleScope)
+        // The binder is the single writer of the QML surface: it collects the ViewModel
+        // while the scene is live and seeds it once on READY, through the same render()
+        // path — this used to be six collectors plus a hand-maintained duplicate seed.
+        binder = QmlGateBinder(
+            mainQml = mainQml,
+            viewModel = viewModel,
+            frames = FrameFileStore(cacheDir),
+            scope = lifecycleScope,
+            onSettingsRequested = { startActivity(Intent(this, SettingsActivity::class.java)) },
+        )
 
         // First run goes straight to setup — but only from onStatusChanged, once the QML
         // reports READY. Launching Settings here would race the QML load: if Settings
@@ -231,12 +187,12 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // The load can also stall because the activity was stopped mid-load (a launch with
         // the screen off does it). Coming back does not resume it, so re-arm the watchdog
         // for a window in which we are actually visible and allowed to start an activity.
-        if (!qmlReady) {
+        if (binder?.ready != true) {
             qtHost.removeCallbacks(qmlWatchdog)
             qtHost.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
         }
 
-        gateLease = gate.acquire("phone-ui")
+        gateLease = container.gateService.acquire("phone-ui")
         cameraGrabber.start()
         // Settings may have changed while we were away — including the home position or
         // the geofence toggle.
@@ -263,37 +219,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     override fun onStatusChanged(status: QtQmlStatus?, content: QtQuickViewContent?) {
         Log.i(TAG, "QtQuickView status: $status")
         if (status != QtQmlStatus.READY || content != mainQml) return
-        qmlReady = true
         qtHost.removeCallbacks(qmlWatchdog)
         QtRestartActivity.clearRestartStamp(this)
 
-        // Seed the view with the state we already have.
-        mainQml.statusText = GatePolicy.gateStatusLine(
-            gate.connection.value,
-            gate.bridgeStatus.value,
-            gate.gateState.value.state,
-        )
-        mainQml.lastError = gate.lastError.value
-        mainQml.cameraConfigured = container.configStore.current.camera.hasPicture
-        mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
-        cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }
-        mainQml.homeDistance = formatHomeDistance(
-            homeDistanceTracker.distance.value?.meters,
-            container.configStore.current.home.radiusMeters,
-        )
-
-        // QML -> Kotlin: the generated connect<Signal>Listener returns an id you can use
-        // to disconnect later. The first lambda argument is the signal name.
-        commandListenerId = mainQml.connectCommandRequestedListener { _, action ->
-            Log.i(TAG, "QML asked: $action")
-            gate.sendCommand(action)
-        }
-
-        // The theme is NoActionBar so the QML fills the screen; the way back into setup is
-        // a control inside the QML itself rather than an options menu that cannot render.
-        settingsListenerId = mainQml.connectSettingsRequestedListener { _, _ ->
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
+        // Seeds the scene and wires the QML -> Kotlin signals — see [QmlGateBinder].
+        binder?.onQmlReady()
 
         // The first-run setup redirect, deferred here from onCreate: the scene is loaded
         // now, so covering the activity can no longer strand the load. Cleared so a
@@ -304,24 +234,12 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         }
     }
 
-    /**
-     * Writes the latest frame to a private cache file and returns a `file://` URL for QML.
-     *
-     * Two files, used alternately, rather than one path plus a `?v=` cache-buster. Both
-     * schemes give QML a URL that differs from the last one — required, because setting an
-     * identical string on a QML property emits no change and QtQuick caches Image sources
-     * by URL — but only alternating names guarantee we are never *rewriting the file Qt's
-     * loader thread is reading*, which can fail the load outright and leave the panel blank
-     * until the next snapshot. The QML side loads into whichever Image is hidden and only
-     * swaps once the decode is done, so the old still stays up meanwhile.
-     *
-     * The bitmap is already ≤960 px on its longest edge (downscaled in the grabber), so the
-     * JPEG is a few tens of KB.
-     */
-    private fun writeFrame(bitmap: Bitmap): String {
-        val file = File(cacheDir, "camera-frame-${++frameVersion % 2}.jpg")
-        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-        return "file://${file.absolutePath}"
+    override fun onDestroy() {
+        // The signal listeners hold this activity through their lambdas on the Qt side;
+        // the binder disconnects them and clears the frame cache.
+        binder?.close()
+        binder = null
+        super.onDestroy()
     }
 
     /**

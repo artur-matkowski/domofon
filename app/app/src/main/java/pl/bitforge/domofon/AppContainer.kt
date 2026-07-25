@@ -12,8 +12,11 @@ import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.SecretStore
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.data.mqtt.HiveMqTransport
+import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.geo.GeofenceManager
 import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.ui.notifications.GateEventNotifier
+import pl.bitforge.domofon.ui.shared.GateViewModel
 
 /**
  * The composition root — the one place that constructs and wires the app's objects.
@@ -48,6 +51,12 @@ class AppContainer(app: Application) : AutoCloseable {
 
     val geofenceManager = GeofenceManager(configStore)
 
+    /** Stateless notification renderer; *when* to post is its callers' business. */
+    val gateNotifier = GateNotifier()
+
+    /** The single state-change→notification collector; started once by [DomofonApp]. */
+    val gateEventNotifier = GateEventNotifier(app, gateService, gateNotifier, appScope)
+
     /** A per-surface camera still producer; the caller starts/stops it with its lifecycle. */
     fun newCameraGrabber(context: Context) =
         CameraFrameGrabber(context.applicationContext, configStore)
@@ -55,6 +64,20 @@ class AppContainer(app: Application) : AutoCloseable {
     /** A per-surface distance readout; same ownership rule as the grabber. */
     fun newHomeDistanceTracker(context: Context) =
         HomeDistanceTracker(context.applicationContext, configStore, geofenceManager)
+
+    /** One ViewModel per surface, on that surface's lifecycle scope. */
+    fun newGateViewModel(
+        scope: CoroutineScope,
+        grabber: CameraFrameGrabber,
+        tracker: HomeDistanceTracker,
+    ) = GateViewModel(
+        gate = gateService,
+        config = configStore.config,
+        cameraStatus = grabber.status,
+        frame = grabber.frame,
+        distance = tracker.distance,
+        scope = scope,
+    )
 
     /** The write-through backend for the XML settings screen. */
     fun newPreferenceDataStore() = ConfigPreferenceDataStore(configStore)

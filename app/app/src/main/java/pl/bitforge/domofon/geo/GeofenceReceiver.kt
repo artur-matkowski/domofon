@@ -6,12 +6,9 @@ import android.content.Intent
 import android.util.Log
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingEvent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import pl.bitforge.domofon.container
-import pl.bitforge.domofon.gate.GateNotifier
 
 /**
  * Entering the home fence surfaces the gate on the car screen.
@@ -72,25 +69,33 @@ internal object ArrivalPopUp {
 
     /** goAsync() allows roughly 10 s; leave headroom to post the notification. */
     private const val STATE_TIMEOUT_MS = 6_000L
+
+    /** Hard bound on the whole arrival flow, inside the goAsync budget with headroom. */
+    private const val RECEIVER_BUDGET_MS = 9_500L
     private const val TAG = "Domofon"
 
     fun run(context: Context, finish: () -> Unit) {
-        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+        // The app-wide scope, not an ad-hoc one — the old CoroutineScope created here was
+        // never cancelled. The outer timeout hard-bounds the whole flow inside goAsync's
+        // ~10 s budget.
+        val container = context.container
+        container.appScope.launch {
             try {
-                // use {} pairs the release with this acquisition and nothing else. The old
-                // owner count needed the acquire *outside* the try, because a throw between
-                // the two would release a slot never taken and tear down a connection the
-                // phone UI was still holding; a lease closes itself at most once, and
-                // acquire() no longer throws on bad config — the transport reports failures
-                // through the connection flow instead.
-                val gate = context.container.gateService
-                gate.acquire("arrival").use {
-                    // Null when the VPN is asleep or the broker is unreachable. The pop-up
-                    // says so rather than not appearing at all — silence looks identical to
-                    // a bug.
-                    val state = gate.awaitFreshState(STATE_TIMEOUT_MS)
-                    Log.i(TAG, "geofence pop-up with state=${state?.state ?: "unknown"}")
-                    GateNotifier.notifyApproaching(context, state)
+                withTimeoutOrNull(RECEIVER_BUDGET_MS) {
+                    // use {} pairs the release with this acquisition and nothing else. The
+                    // old owner count needed the acquire *outside* the try, because a throw
+                    // between the two would release a slot never taken and tear down a
+                    // connection the phone UI was still holding; a lease closes itself at
+                    // most once, and acquire() no longer throws on bad config — the
+                    // transport reports failures through the connection flow instead.
+                    container.gateService.acquire("arrival").use {
+                        // Null when the VPN is asleep or the broker is unreachable. The
+                        // pop-up says so rather than not appearing at all — silence looks
+                        // identical to a bug.
+                        val state = container.gateService.awaitFreshState(STATE_TIMEOUT_MS)
+                        Log.i(TAG, "geofence pop-up with state=${state?.state ?: "unknown"}")
+                        container.gateNotifier.notifyApproaching(context, state)
+                    }
                 }
             } finally {
                 finish()

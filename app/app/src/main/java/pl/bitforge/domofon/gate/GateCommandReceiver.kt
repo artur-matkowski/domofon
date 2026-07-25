@@ -8,10 +8,8 @@ import android.content.Intent
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.container
 
@@ -42,14 +40,20 @@ class GateCommandReceiver : BroadcastReceiver() {
         // move, and a notification still sitting there reads as "nothing happened".
         if (notifId >= 0) NotificationManagerCompat.from(app).cancel(notifId)
 
+        // The app-wide scope, not an ad-hoc one: the old CoroutineScope created here was
+        // never cancelled, so a hung send leaked its Job past the receiver forever. The
+        // timeout keeps the work inside goAsync's ~10 s budget with margin for the
+        // failure notification.
         val pending = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+        app.container.appScope.launch {
             try {
-                val ok = app.container.gateService.sendCommandAwait(action)
+                val ok = withTimeoutOrNull(RECEIVER_BUDGET_MS) {
+                    app.container.gateService.sendCommandAwait(action)
+                } ?: false
                 Log.i(TAG, "notification action '$action' -> ${if (ok) "sent" else "FAILED"}")
                 // The dismissal above was the acknowledgement. Without this, a command that
                 // never left the phone looks exactly like one that worked.
-                if (!ok) GateNotifier.notifyCommandFailed(app, action)
+                if (!ok) app.container.gateNotifier.notifyCommandFailed(app, action)
             } finally {
                 pending.finish()
             }
@@ -80,6 +84,9 @@ class GateCommandReceiver : BroadcastReceiver() {
         private const val EXTRA_ACTION = "action"
         private const val EXTRA_NOTIF_ID = "notif_id"
         private const val TAG = "Domofon"
+
+        /** Hard bound on the receiver's work, inside goAsync's ~10 s with headroom. */
+        private const val RECEIVER_BUDGET_MS = 9_500L
 
         fun pendingIntent(context: Context, action: String, notifId: Int): PendingIntent {
             val intent = Intent(context, GateCommandReceiver::class.java)

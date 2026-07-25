@@ -17,7 +17,9 @@ class DomofonApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        container
+        // Exactly one process-wide state-change collector — the per-surface observers it
+        // replaces double-posted every notification when phone and car were both open.
+        container.gateEventNotifier.start()
 
         val nm = getSystemService(NotificationManager::class.java)
 
