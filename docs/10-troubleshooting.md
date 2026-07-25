@@ -744,6 +744,80 @@ Added 2026-07-23 during the pre-publication security pass (ch. 11).
   Verified with a clean `:app:bundleRelease :app:assembleRelease` (R8 on) in a scratchpad
   copy — both the `.aab` and the release `.apk` build. Still to prove on device (R8).
 
+## Build machine / host resources
+
+- **Symptom**: `scripts/build-release.sh` freezes the whole desktop. Screen black, mouse
+  still moving but at ~0.5 fps, keyboard dead, no OOM message, no recovery — nine minutes
+  of it on 2026-07-24 before a hard reboot. It had happened before, more mildly.
+  **Cause**: the build was the last straw, not the cause. Three things stacked up:
+  1. **The machine was already starved.** `~/.gradle/daemon/<ver>/daemon-<pid>.out.log`
+     records system-wide `MemAvailable` every 5 s (Gradle's `MemInfoOsMemoryInfo` reads
+     `/proc/meminfo`), and it is the best forensic record you have of a freeze — it
+     survives the reboot. That night it showed available RAM under 3 GB from 18:49 onward,
+     0.29 GB at 19:46, and **0.58 GB at 21:33:51**. The release build started at 21:34:05.
+  2. **A 3.1 GiB Gradle worker daemon squatted for 2h45m.** Gradle's default
+     `org.gradle.daemon.idletimeout` is 10800000 ms — three hours. From 18:49 the log
+     repeats `3334298009 physical memory requested … 0 released` every 5 s, **3474 times**:
+     Gradle trying and failing to reclaim its own worker on a machine with nothing to give.
+     And it was not one Gradle stack but **two**: the Qt Gradle Plugin runs a *nested*
+     Gradle build out of `app/build/qt_generated/qtquickview/android-build-<target>/` with
+     its **own wrapper — Gradle 9.3.1, against the outer project's 9.4.1** — and its own
+     generated `gradle.properties` carrying another `-Xmx3200m` **and
+     `org.gradle.parallel=true`**. `~/.gradle/daemon/9.3.1/` has its own daemon logs, and
+     they show that daemon alive at **21:41:56 with 301 MB free**, logging the identical
+     `0 released` spiral while the machine was already frozen. Two independent 3.2 GB-heap
+     daemon stacks, each spawning its own workers.
+  3. **Nothing on the host could break the deadlock.** Swap is one 3.7 GB partition, there
+     is no zram, and neither `earlyoom` nor `systemd-oomd` is installed. With nothing to
+     kill and nowhere to swap, the kernel reclaim-thrashes instead. A frozen desktop with a
+     live mouse pointer *is* that thrash.
+
+  **Fix** (2026-07-24): `scripts/lib/memguard.sh`, sourced by both build scripts.
+  * `preflight_memory` refuses to start a build below a threshold (10 GB release, 6 GB
+    debug) and prints the fattest processes, so the refusal says what to close. It runs
+    before the version math in the release script, so a refusal can never leave a tag
+    behind. `./gradlew --stop` is attempted first — that alone would have returned ~3 GB
+    that night. Bypass: `DOMOFON_SKIP_MEM_CHECK=1`.
+  * `run_capped` runs Gradle inside a transient `systemd-run --user --scope` with
+    `MemoryHigh` / `MemoryMax` / `MemorySwapMax`. A runaway build is OOM-killed **inside its
+    own cgroup** and the session survives. Requires cgroup v2 with the memory controller
+    delegated to `user-<uid>.slice`, which Debian 13 + KDE already does; if it is missing
+    the helper warns loudly and runs uncapped rather than refusing to build.
+  * Both scripts pass **`--no-daemon`**, and that is measured, not assumed: a process that
+    detaches inside a scope does *not* die with it — it keeps running and stays in that
+    scope's cgroup, which therefore also stays alive. A surviving Gradle daemon would make
+    the next build's cap meaningless (the client joins the old daemon and does its work in
+    the *old* cgroup), and brings the squatter straight back.
+  * **`--no-daemon` alone is not enough**, because it only governs the outer build — Qt's
+    nested Gradle build starts a daemon of its own regardless. So after the command
+    returns, `run_capped` reaps whatever is still in its own cgroup (TERM, then KILL after
+    5 s). That is precise rather than blunt: only this build ever put processes in that
+    cgroup. Observed on a clean debug build: *"reaping 5 process(es) the build left
+    behind"*, after which the scope disappears and no Gradle JVM survives. One scope, one
+    build, nothing outlives it. The cost is a cold Gradle start per build.
+  * Measured peaks inside the cgroup, for calibrating the caps: **4140 MB** clean debug,
+    632 MB incremental debug, and **4528 MB for a release build in which R8 genuinely ran**
+    (`minifyReleaseWithR8` executed, along with packaging and bundling; the Qt native and
+    Kotlin stages were up-to-date from an earlier build, so a fully clean release would sit
+    somewhere above this — the two heavy phases are largely sequential, so expect ~5–6 GB
+    rather than anything near the ceiling). Debug is capped at 9G, release at 12G. Both
+    have room; neither has ever reached `MemoryHigh`.
+  * `app/gradle.properties` gained `kotlin.daemon.jvmargs` (the Kotlin daemon is a second
+    JVM and silently inherits `org.gradle.jvmargs` — two 3.2 GB ceilings where one was
+    meant), `org.gradle.workers.max=6` (12 cores would allow 12 concurrent dex/R8 workers),
+    and `org.gradle.daemon.idletimeout=1800000`. `org.gradle.jvmargs` was deliberately left
+    at `-Xmx3200m`: the "heap usage: 3% of 3.1 GiB" in the log is measured at build *start*
+    and says nothing about R8's peak.
+
+  **Not fixed, and it is a host decision rather than a repo one** — `MemoryMax` limits, it
+  does not reserve. If Firefox, Chromium, Steam (a running game showed up as a 6 GB
+  `GameThread`) and Docker have already taken 30 GB, the pre-flight will refuse to start
+  and that is the intended behaviour. To make the *machine* survive memory pressure rather
+  than just the build: install `earlyoom` (`1.8.2-1` is in Debian 13, not installed here)
+  or enable `systemd-oomd`; add zram to back up the 3.7 GB swap partition; and note that
+  `/tmp` is a **16 GB tmpfs**, so the agent's mandated `/tmp/claude-*/scratchpad` build
+  copies are unreclaimable RAM until deleted or rebooted — build somewhere disk-backed.
+
 ## Backlog / future ideas
 
 (park post-M8 wishes here)

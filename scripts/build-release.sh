@@ -24,6 +24,15 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="$ROOT_DIR/app"
 DIST_DIR="$ROOT_DIR/dist"
 
+# Memory pre-flight + cgroup cap. A release build froze this machine on 2026-07-24; see
+# scripts/lib/memguard.sh and docs/10 "Build machine / host resources".
+# shellcheck source=lib/memguard.sh
+. "$SCRIPT_DIR/lib/memguard.sh"
+MEM_REQUIRED_MB=10240      # refuse to start below this
+MEM_HIGH=8G                # reclaim pressure starts here
+MEM_MAX=12G                # hard ceiling: exceed it and the build dies, not the desktop
+MEM_SWAP=2G                # of a 3.7 GB swap partition — leave the desktop some
+
 DRY_RUN=0 FORCE=0 NO_TAG=0
 for arg in "$@"; do
     case "$arg" in
@@ -41,6 +50,13 @@ for arg in "$@"; do
 done
 
 git() { command git -C "$ROOT_DIR" "$@"; }
+
+# --- 0. Memory pre-flight --------------------------------------------------------------
+# Before the version math, so a refusal costs nothing and can never leave a tag behind.
+# --dry-run builds nothing, so it needs no headroom.
+if [ "$DRY_RUN" -eq 0 ]; then
+    preflight_memory "$MEM_REQUIRED_MB" release "$APP_DIR"
+fi
 
 # --- 1. Compute the next version from Conventional Commits -----------------------------
 last="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
@@ -100,7 +116,12 @@ case "$storeFile" in /*) jks="$storeFile" ;; *) jks="$APP_DIR/$storeFile" ;; esa
 [ -f "$jks" ] || { echo "Signing keystore not found: $jks" >&2; exit 1; }
 
 # --- 3. Build --------------------------------------------------------------------------
-( cd "$APP_DIR" && ./gradlew :app:bundleRelease :app:assembleRelease -PversionName="$NEXT" )
+# --no-daemon on purpose. A release is infrequent, so daemon reuse buys nothing, and it
+# guarantees every JVM the build spawns (Gradle, Kotlin, R8 workers) lives inside the
+# scope and dies with it. That removes the exact failure of 2026-07-24, where a 3.1 GiB
+# worker daemon outlived its build by nearly three hours.
+( cd "$APP_DIR" && run_capped "$MEM_HIGH" "$MEM_MAX" "$MEM_SWAP" \
+    ./gradlew --no-daemon :app:bundleRelease :app:assembleRelease -PversionName="$NEXT" )
 
 AAB="$APP_DIR/app/build/outputs/bundle/release/app-release.aab"
 APK="$APP_DIR/app/build/outputs/apk/release/app-release.apk"

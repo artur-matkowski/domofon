@@ -186,6 +186,14 @@ scripts/build-release.sh        # -> dist/domofon-<version>-release.{aab,apk}
 It computes the version from git (below), builds the bundle and a testable release APK,
 runs the §1 no-secrets scan, and tags the release. See `scripts/README.md`.
 
+**It can refuse to start.** Before doing anything else the script checks free RAM and
+declines below ~10 GB, printing the biggest processes so you know what to close; the build
+itself then runs inside a `systemd` scope with a hard memory cap, so a runaway build is
+killed instead of freezing the desktop. This exists because a release build locked the
+machine solid on 2026-07-24 — see `scripts/lib/memguard.sh` and docs/10 → *Build machine /
+host resources*. `DOMOFON_SKIP_MEM_CHECK=1` overrides the refusal, `DOMOFON_MEM_MAX=<size>`
+the cap.
+
 `keystore.properties` and `*.jks` are gitignored. **Back up `upload.jks` off this
 machine.** With Play App Signing the app signing key is Google's and recoverable; the
 upload key is not, and losing it means losing the ability to publish updates.

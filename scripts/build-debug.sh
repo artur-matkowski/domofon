@@ -19,6 +19,17 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="$ROOT_DIR/app"
 DIST_DIR="$ROOT_DIR/dist"
 
+# Memory pre-flight + cgroup cap — see scripts/lib/memguard.sh. This is the script the
+# agent runs, and it runs it in a /tmp scratchpad copy, which on this machine is a tmpfs:
+# every byte of that build tree is unreclaimable RAM until it is deleted or the box is
+# rebooted. So this is the build that most needs a ceiling, not the rarer release one.
+# shellcheck source=lib/memguard.sh
+. "$SCRIPT_DIR/lib/memguard.sh"
+MEM_REQUIRED_MB=6144
+MEM_HIGH=6G
+MEM_MAX=9G
+MEM_SWAP=1G
+
 INSTALL=0
 for arg in "$@"; do
     case "$arg" in
@@ -33,10 +44,19 @@ done
 
 cd "$APP_DIR"
 
+preflight_memory "$MEM_REQUIRED_MB" debug "$APP_DIR"
+
+# --no-daemon, and the reason is measured rather than assumed. A Gradle daemon forked
+# inside a transient scope does NOT die with it — it keeps running and stays in that
+# scope's cgroup, which therefore also stays alive. The next build would then open a fresh
+# scope, connect to the surviving daemon, and do all its actual work in the *old* cgroup:
+# the new cap would be governing an idle client. That is both confusing and the squatting
+# daemon of 2026-07-24 coming straight back. One scope per build, nothing outliving it.
+# Cost: a cold Gradle start (~10-20 s) on every debug build. Worth it.
 if [ "$INSTALL" -eq 1 ]; then
-    ./gradlew :app:installDebug
+    run_capped "$MEM_HIGH" "$MEM_MAX" "$MEM_SWAP" ./gradlew --no-daemon :app:installDebug
 else
-    ./gradlew :app:assembleDebug
+    run_capped "$MEM_HIGH" "$MEM_MAX" "$MEM_SWAP" ./gradlew --no-daemon :app:assembleDebug
 fi
 
 APK="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
@@ -56,4 +76,10 @@ cp -f "$APK" "$OUT"
 
 echo
 echo "debug APK: $OUT"
-[ "$INSTALL" -eq 1 ] && echo "installed on the connected device."
+# `[ … ] && echo` as the final statement made the script exit 1 on every successful build
+# without --install: set -e exempts the left side of an && list, so the script simply ran
+# off the end carrying that 1. Harmless when nobody checked, actively misleading now that a
+# non-zero exit is supposed to mean "the build failed, possibly killed by its memory cap".
+if [ "$INSTALL" -eq 1 ]; then
+    echo "installed on the connected device."
+fi
