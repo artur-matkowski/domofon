@@ -28,13 +28,47 @@ scene; QML (via `QtQuickView`, first-class since Qt 6.8) draws the phone UI.
 ([modules/ui-phone.md](../modules/ui-phone.md)); the fragile Qt Gradle build
 ([build-and-release.md](../build-and-release.md)). **Status:** active.
 
-## D3 — The camera is one RTSP URL and nothing else
+## D3 — RTSP is the camera default; a restreamer path is a peer, not an override
 
 **Context (Artur's rule, 2026-07-24):** if it needs a backend or knows a camera brand, it
 is a private tool rather than a publishable app. Snapshot endpoints are vendor-specific
-and often Digest-only. **Decision:** RTSP is the one required camera setting; stills are
-pulled out of the stream. An HTTP JPEG URL exists as an *optional* override, never a
-requirement. **Status:** active.
+and often Digest-only. **Original decision (2026-07-24):** RTSP is the one required camera
+setting; stills are pulled out of the stream. An HTTP JPEG URL exists as an *optional*
+override, never a requirement.
+
+**Amended 2026-07-25 (Artur).** The override was the wrong shape for two reasons. Its
+selection was *inferred* — a non-blank snapshot URL silently outranked the stream — so a
+filled-in field was the only way to express a preference, the two URLs could never both hold
+a value, and only one of them could ever be tried. And it carried no audio, which made the
+restreamer path strictly worse than RTSP rather than differently good.
+
+**Decision:** the user picks the source explicitly (`camera.source`, a dropdown). Two paths:
+
+| | Picture | Audio |
+|---|---|---|
+| `RTSP` (default) | stills pulled from the stream | a track of the same session |
+| `HTTP` | a JPEG URL polled on the interval | a *separate* audio-only RTSP stream |
+
+**What keeps D3's actual intent intact:** RTSP is still the only path a fresh install can
+use, so a stranger with nothing but a camera is unaffected — the HTTP path needs a
+restreamer someone deliberately set up. Nothing vendor-specific is compiled in: no URL is
+composed in code, no camera brand is named, and every address is still typed at runtime
+(D6). **Consequences:** the settings screen shows and hides rows per source (the first use of
+`Preference.isVisible` in this app), and the grabber reopens its source when the resolved
+`CameraFeed` changes, so switching applies to a live session. **Status:** active. See
+[modules/camera.md](../modules/camera.md).
+
+## D3a — Two RTSP sessions are fine; two to the *camera* are not
+
+**Context:** the deleted `RtspAudioPlayer` opened a second RTSP session and knocked the
+stills stream off every cycle ([troubleshooting.md](../troubleshooting.md)). The rule that
+entry left behind was recorded as "one session carries both", and its own suggested remedy
+was "a go2rtc restream — one ingest, many clients — **not** a second direct connection".
+**Decision (2026-07-25):** the constraint is *concurrency at the camera*, not session count.
+The HTTP path's `RtspAudioSource` is a second session by design, pointed at a restreamer
+while the pictures come from Frigate — two different servers, no contention. Aiming both
+halves at the camera itself reproduces the original failure exactly, which is why the audio
+row's summary says so in as many words. **Status:** active.
 
 ## D4 — Decoded video frames are never read on the CPU
 
@@ -135,13 +169,19 @@ something malicious *and* granted it notification access.
 
 ### R2 — Cleartext HTTP is permitted app-wide
 
-(`res/xml/network_security_config.xml`, 2026-07-24.) For the *optional* HTTP snapshot
-override only. The block cannot be lifted per-host because **every address in this app is
-typed by the user at runtime** — the whole point of D6 — so it is lifted globally.
+(`res/xml/network_security_config.xml`, 2026-07-24.) For the HTTP camera path only. The
+block cannot be lifted per-host because **every address in this app is typed by the user at
+runtime** — the whole point of D6 — so it is lifted globally.
 
-*What is actually exposed:* nothing, on a default install. The camera's own path is RTSP
-(a raw socket this policy never governed) and the snapshot field is empty unless the user
-fills it. Gate **commands** never travel HTTP — they are MQTT, with its own TLS switch.
+*What is actually exposed:* nothing, on a default install. The default source is RTSP (a raw
+socket this policy never governed) and the image field is empty unless the user fills it.
+Gate **commands** never travel HTTP — they are MQTT, with its own TLS switch.
+
+*Wider than it was (2026-07-25, D3):* the HTTP path is now something a user selects rather
+than a rarely-set override, so on an install that picks it, cleartext frames are the norm
+rather than the exception. This does not change the assessment — the traffic is a gate still
+on a home LAN or inside the VPN, and the alternative is excluding every consumer camera and
+homelab restreamer — but it is no longer a corner case.
 
 *Why not closed:* requiring `https://` would exclude essentially every consumer IP camera
 and most homelab restreamers; a pinned host list would put a deployment address back in
@@ -178,8 +218,13 @@ or resurrects them by accident.
   location-FGS use case (August 2026), and retained topics make the arrival pop-up work
   without it. If a foreground service is ever added, its honest type is `connectedDevice`
   — see the note in [build-and-release.md](../build-and-release.md).
-- **HTTP snapshot as the primary camera source.** Worked, but made the app
-  deployment-shaped (vendor paths, Digest auth). Demoted to the optional override by D3.
+- **HTTP snapshot as the primary camera source — *straight off the camera*.** Worked, but
+  made the app deployment-shaped (vendor paths, Digest auth). Demoted to an optional override
+  by D3, and that override is itself gone. **Note the amendment (2026-07-25):** HTTP images
+  *are* now a selectable path, because pointing them at a restreamer answers the original
+  objection rather than ignoring it — Frigate or go2rtc terminates the vendor path and the
+  Digest auth, so the app needs to know neither. What stays dead is the app itself reaching
+  into a camera's firmware-specific snapshot endpoint. See D3.
 - **`Build.MODEL`-derived MQTT client id.** Collides for every user on the same phone
   model; two strangers would evict each other from the broker in a loop forever. Replaced
   by a random per-install id.

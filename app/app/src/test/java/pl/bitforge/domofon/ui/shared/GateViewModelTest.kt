@@ -9,7 +9,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import pl.bitforge.domofon.data.camera.CameraFrame
 import pl.bitforge.domofon.data.camera.CameraFrameGrabber
+import pl.bitforge.domofon.domain.camera.AudioStatus
 import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.data.mqtt.FakeTransport
 import pl.bitforge.domofon.data.mqtt.GateService
@@ -25,12 +27,12 @@ class GateViewModelTest {
     )
 
     private val config = MutableStateFlow(completeConfig)
-    private val cameraStatus = MutableStateFlow(CameraFrameGrabber.Status.IDLE)
-    private val frame = MutableStateFlow<android.graphics.Bitmap?>(null)
+    private val cameraHealth = MutableStateFlow(CameraFrameGrabber.Health())
+    private val frame = MutableStateFlow<CameraFrame?>(null)
     private val distance = MutableStateFlow<HomeDistanceTracker.Reading?>(null)
 
     private fun TestScope.viewModel(gate: GateService) =
-        GateViewModel(gate, config, cameraStatus, frame, distance, backgroundScope)
+        GateViewModel(gate, config, cameraHealth, frame, distance, backgroundScope)
 
     private fun TestScope.gate() = GateService(
         transport = transport,
@@ -94,9 +96,34 @@ class GateViewModelTest {
     @Test
     fun `camera status is carried for placeholder wording`() = runTest {
         val vm = viewModel(gate())
-        cameraStatus.value = CameraFrameGrabber.Status.ERROR
+        cameraHealth.value = CameraFrameGrabber.Health(frames = CameraFrameGrabber.Status.ERROR)
         runCurrent()
         assertEquals(CameraFrameGrabber.Status.ERROR, vm.uiState.value.cameraStatus)
+    }
+
+    @Test
+    fun `a dead separate audio stream gets its own line, leaving the picture alone`() = runTest {
+        val vm = viewModel(gate())
+        cameraHealth.value = CameraFrameGrabber.Health(
+            frames = CameraFrameGrabber.Status.STREAMING,
+            audio = AudioStatus.ERROR,
+        )
+        runCurrent()
+        assertEquals("Gate audio unavailable", vm.uiState.value.audioNotice)
+        // The stills are fine, and must keep saying so — this is the whole point of the
+        // split: on the HTTP path the two halves fail independently.
+        assertEquals(CameraFrameGrabber.Status.STREAMING, vm.uiState.value.cameraStatus)
+    }
+
+    @Test
+    fun `audio riding the picture's own session reports no notice`() = runTest {
+        val vm = viewModel(gate())
+        cameraHealth.value = CameraFrameGrabber.Health(
+            frames = CameraFrameGrabber.Status.STREAMING,
+            audio = AudioStatus.NONE,
+        )
+        runCurrent()
+        assertEquals("", vm.uiState.value.audioNotice)
     }
 
     @Test

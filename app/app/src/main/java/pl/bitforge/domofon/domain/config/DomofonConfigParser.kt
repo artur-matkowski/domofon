@@ -31,19 +31,21 @@ object ConfigKeys {
     const val LON = "home.longitude"
     const val RADIUS = "home.radiusMeters"
 
+    const val SOURCE = "camera.source"
     const val SNAPSHOT_URL = "camera.snapshotUrl"
     const val RTSP_URL = "camera.rtspUrl"
+    const val AUDIO_URL = "camera.audioUrl"
     const val SNAPSHOT_SECS = "camera.snapshotSecs"
     const val AUDIO_ENABLED = "camera.audioEnabled"
 
     const val REQUIRE_UNLOCK = "security.requireUnlock"
 
     /**
-     * Keys whose values are Keystore-encrypted at rest. Both camera URLs are here because
+     * Keys whose values are Keystore-encrypted at rest. Every camera URL is here because
      * they carry the camera credentials inline (`rtsp://user:pass@host/…`) — there are no
-     * separate username/password fields for either.
+     * separate username/password fields for any of them.
      */
-    val SECRETS = setOf(PASS, SNAPSHOT_URL, RTSP_URL)
+    val SECRETS = setOf(PASS, SNAPSHOT_URL, RTSP_URL, AUDIO_URL)
 }
 
 /**
@@ -108,8 +110,13 @@ object DomofonConfigParser {
                     ?: DomofonConfig.Defaults.RADIUS_M,
             ),
             camera = DomofonConfig.Camera(
+                // Unrecognised values fall back to RTSP rather than throwing: this is the
+                // one setting that decides whether any picture appears at all, and a
+                // stored typo must not leave the panel permanently blank.
+                source = CameraSource.of(prefs.string(ConfigKeys.SOURCE)),
                 snapshotUrl = str(prefs, ConfigKeys.SNAPSHOT_URL, "").trim(),
                 rtspUrl = str(prefs, ConfigKeys.RTSP_URL, "").trim(),
+                audioUrl = str(prefs, ConfigKeys.AUDIO_URL, "").trim(),
                 // Clamped for the same reason as the mqtt fields: a hand-edited 0 would
                 // busy-loop the grabber, and a huge value is harmless but pointless.
                 snapshotSecs = int(prefs, ConfigKeys.SNAPSHOT_SECS, DomofonConfig.Defaults.SNAPSHOT_SECS)

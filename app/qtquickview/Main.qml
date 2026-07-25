@@ -14,14 +14,24 @@ Rectangle {
     // wording lives in one place so the two frontends can never disagree.
     property string statusText: ""
 
-    // Kotlin -> QML. The camera snapshot. cameraFrame is a file:// URL to the latest still
-    // (a Bitmap can't cross the QtQuickView bridge); the URL alternates between two cache
-    // files, so every frame is a new URL and no file is rewritten while it is being read.
+    // Kotlin -> QML. The camera snapshot. cameraFrame is a `data:image/jpeg;base64,…` URI
+    // holding the still itself (a Bitmap can't cross the QtQuickView bridge, and a string
+    // can): every frame is inherently a new URI, so the change signal always fires, and no
+    // gate picture ever touches the disk. It used to be a file:// URL alternating between two
+    // cache files — same guarantee, but the files outlived the app whenever the process was
+    // killed. The Images below must keep `cache: false`, or one entry per frame accumulates
+    // in QtQuick's pixmap cache forever.
     // cameraStatus mirrors CameraFrameGrabber.Status; cameraConfigured gates the whole panel
-    // so a build with no RTSP URL shows just the gate controls, exactly as before.
+    // so a build with no camera configured shows just the gate controls, exactly as before.
     property string cameraFrame: ""
     property string cameraStatus: "idle"
     property bool cameraConfigured: false
+
+    // Kotlin -> QML. Why the gate is silent, when silence is a fault rather than a quiet
+    // gate — worded by GatePolicy. Only ever set on the HTTP camera path, whose audio is a
+    // stream of its own that can die while the pictures keep arriving; on the RTSP path a
+    // dead audio track is a dead session and cameraStatus already says so. Empty hides it.
+    property string audioNotice: ""
 
     // Kotlin -> QML. Why the last command did not reach the gate — either the bridge refused
     // it (hc12/error) or it never left the phone. Empty when there is nothing to report; it
@@ -130,6 +140,19 @@ Rectangle {
                 color: Theme.muted
                 font.pixelSize: root.unit * 4
             }
+        }
+
+        // The gate audio is broken while the picture is fine — only reachable on the HTTP
+        // camera path, where sound arrives on a stream of its own. Muted rather than red:
+        // the gate itself is working and still openable, so this is information, not a
+        // failure of the thing the user came here to do.
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            visible: root.audioNotice !== ""
+            text: root.audioNotice
+            color: Theme.muted
+            font.pixelSize: root.unit * 4
         }
 
         Text {

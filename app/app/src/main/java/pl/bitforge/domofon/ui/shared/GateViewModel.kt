@@ -1,11 +1,11 @@
 package pl.bitforge.domofon.ui.shared
 
-import android.graphics.Bitmap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import pl.bitforge.domofon.data.camera.CameraFrame
 import pl.bitforge.domofon.data.camera.CameraFrameGrabber
 import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.data.mqtt.GateService
@@ -33,9 +33,10 @@ import pl.bitforge.domofon.data.location.HomeDistanceTracker
 class GateViewModel(
     private val gate: GateService,
     config: StateFlow<DomofonConfig>,
-    cameraStatus: StateFlow<CameraFrameGrabber.Status>,
+    /** Picture *and* separate-audio health as one flow, so they cannot disagree in time. */
+    cameraHealth: StateFlow<CameraFrameGrabber.Health>,
     /** The newest camera frame, delivered beside [uiState] — see [GateUiState] for why. */
-    val frame: StateFlow<Bitmap?>,
+    val frame: StateFlow<CameraFrame?>,
     distance: StateFlow<HomeDistanceTracker.Reading?>,
     scope: CoroutineScope,
 ) {
@@ -45,7 +46,7 @@ class GateViewModel(
                 gateState, bridge, connection, lastError, cfg ->
             Backend(gateState, bridge, connection, lastError, cfg)
         }
-            .combine(cameraStatus) { backend, cam -> backend to cam }
+            .combine(cameraHealth) { backend, cam -> backend to cam }
             .combine(distance) { (backend, cam), reading -> derive(backend, cam, reading) }
             .stateIn(
                 scope,
@@ -60,7 +61,7 @@ class GateViewModel(
                         gate.lastError.value,
                         config.value,
                     ),
-                    cameraStatus.value,
+                    cameraHealth.value,
                     distance.value,
                 ),
             )
@@ -77,7 +78,7 @@ class GateViewModel(
 
     private fun derive(
         backend: Backend,
-        cameraStatus: CameraFrameGrabber.Status,
+        camera: CameraFrameGrabber.Health,
         reading: HomeDistanceTracker.Reading?,
     ): GateUiState {
         val state = backend.gateState.state
@@ -89,7 +90,8 @@ class GateViewModel(
             gateState = state,
             homeDistance = formatHomeDistance(reading?.meters, backend.config.home.radiusMeters),
             cameraConfigured = backend.config.camera.hasPicture,
-            cameraStatus = cameraStatus,
+            cameraStatus = camera.frames,
+            audioNotice = GatePolicy.cameraAudioNotice(camera.audio),
         )
     }
 }

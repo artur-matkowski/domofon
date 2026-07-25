@@ -126,46 +126,81 @@ data class DomofonConfig(
     }
 
     /**
-     * The camera, as one URL the user already has plus an optional escape hatch.
+     * The camera, as two paths the user picks between rather than one path plus an override.
      *
-     * [rtspUrl] is the real setting: every camera speaks RTSP, the user owns that address
-     * for their own player, and it carries its own auth. Stills are pulled out of it — see
-     * [pl.bitforge.domofon.data.camera.RtspFrameSource]. [snapshotUrl] overrides that with an
-     * HTTP JPEG endpoint for anyone who has a reason (go2rtc, Frigate, bandwidth), and is
-     * deliberately *not* required: snapshot paths are vendor-specific and often Digest-only,
-     * so an app that needed one would only work for people who know their camera's firmware.
+     * [RTSP][CameraSource.RTSP] is the default and the only one a fresh install needs: every
+     * camera speaks RTSP, the user already owns that address for their own player, it carries
+     * its own auth, and stills *and* audio come out of the one session — see
+     * [pl.bitforge.domofon.data.camera.RtspFrameSource].
+     *
+     * [HTTP][CameraSource.HTTP] is for a restreamer in front of the camera (the author runs
+     * Frigate + go2rtc): [snapshotUrl] is polled for JPEGs and [audioUrl] is a *separate*
+     * audio-only RTSP stream. That split is only safe because the two addresses are different
+     * servers — a second session to the **camera** knocks the first one off, which is exactly
+     * how the deleted `RtspAudioPlayer` failed. See docs/modules/camera.md.
+     *
+     * Both paths' fields persist regardless of [source], so switching back and forth never
+     * costs a retyped URL.
      */
     data class Camera(
-        /** Optional HTTP(S) endpoint returning a JPEG still. May carry credentials inline. */
+        /** Which path produces the picture. The user's explicit choice, never inferred. */
+        val source: CameraSource,
+        /** HTTP(S) endpoint returning one JPEG per request. May carry credentials inline. */
         val snapshotUrl: String,
         /** The camera address. Carries the credentials inline: `rtsp://user:pass@host/…` */
         val rtspUrl: String,
         /**
+         * Audio-only RTSP stream for the HTTP path, e.g. a go2rtc restream. Unused on the
+         * RTSP path, where audio rides the picture's own session.
+         */
+        val audioUrl: String,
+        /**
          * Seconds between snapshots the [pl.bitforge.domofon.data.camera.CameraFrameGrabber]
          * fetches. Governs both the phone view's refresh and the car screen's redraw cadence.
-         * Clamped in [ConfigStore.read].
+         * Clamped in the parser.
+         *
+         * Deliberately absent from [feed]: retuning the cadence must not tear down a live
+         * session, which on the RTSP path costs a 1–3 s handshake over the VPN.
          */
         val snapshotSecs: Int,
         /**
-         * Play the RTSP stream's audio to the speaker while a camera view is open — see
-         * [pl.bitforge.domofon.data.camera.RtspAudioPlayer]. On by default; a switch, not a URL,
-         * so a user can silence the gate without unsetting [rtspUrl]. Only the RTSP source
-         * carries audio, so this does nothing for a snapshot-only ([hasSnapshot]) config.
+         * Play gate audio to the speaker while a camera view is open. On by default; a
+         * switch, not a URL, so a user can silence the gate without unsetting an address.
+         * Applies to both paths — the RTSP session's own audio track, or [audioUrl].
          */
         val audioEnabled: Boolean,
     ) {
-        /** An HTTP snapshot endpoint is configured, and overrides the stream as the source. */
-        val hasSnapshot: Boolean get() = snapshotUrl.isNotBlank()
+        /**
+         * The selected path resolved to exactly the fields that path needs, or null when its
+         * required URL is blank — which is the whole of "is a camera configured".
+         *
+         * This value doubles as the **session restart key**: the grabber reopens its source
+         * when this changes and only when it changes, the same trick [wire] plays for MQTT.
+         */
+        val feed: CameraFeed?
+            get() = when (source) {
+                CameraSource.RTSP ->
+                    if (rtspUrl.isBlank()) null
+                    else CameraFeed.Rtsp(url = rtspUrl, audioEnabled = audioEnabled)
 
-        /** A stream is configured — the normal case, and the source of stills by default. */
-        val hasStream: Boolean get() = rtspUrl.isNotBlank()
+                CameraSource.HTTP ->
+                    if (snapshotUrl.isBlank()) null
+                    else CameraFeed.Http(
+                        imageUrl = snapshotUrl,
+                        // Blank is legitimate: stills without sound is a working config.
+                        audioUrl = if (audioEnabled) audioUrl else "",
+                        audioEnabled = audioEnabled,
+                    )
+            }
 
         /** Whether the phone panel and the car's camera pane have anything to show at all. */
-        val hasPicture: Boolean get() = hasSnapshot || hasStream
+        val hasPicture: Boolean get() = feed != null
 
-        /** Same reasoning as [Broker.toString] — both URLs embed the credentials. */
+        /** Same reasoning as [Broker.toString] — every one of these URLs embeds credentials. */
         override fun toString(): String =
-            "Camera(snapshot=$hasSnapshot, stream=$hasStream, snapshotSecs=$snapshotSecs, audio=$audioEnabled)"
+            "Camera(source=$source, snapshot=${snapshotUrl.isNotBlank()}, " +
+                "stream=${rtspUrl.isNotBlank()}, audioUrl=${audioUrl.isNotBlank()}, " +
+                "snapshotSecs=$snapshotSecs, audio=$audioEnabled)"
     }
 
     companion object {
@@ -195,8 +230,10 @@ data class DomofonConfig(
             ),
             home = Home(enabled = false, latitude = null, longitude = null, radiusMeters = Defaults.RADIUS_M),
             camera = Camera(
+                source = Defaults.CAMERA_SOURCE,
                 snapshotUrl = "",
                 rtspUrl = "",
+                audioUrl = "",
                 snapshotSecs = Defaults.SNAPSHOT_SECS,
                 audioEnabled = Defaults.AUDIO_ENABLED,
             ),
@@ -228,7 +265,81 @@ data class DomofonConfig(
         /** Gate audio plays by default: hearing the gate is the point of an entry phone. */
         const val AUDIO_ENABLED = true
 
+        /**
+         * RTSP, because it is the only path that works with nothing but the camera itself.
+         * The HTTP path needs a restreamer someone deliberately set up, so it can never be
+         * what a stranger's fresh install assumes.
+         */
+        val CAMERA_SOURCE = CameraSource.RTSP
+
         /** 2 km — well above the geofence design's ~150 m reliability floor (docs/modules/geo.md); fires ~2 min out at 60 km/h. */
         const val RADIUS_M = 2_000f
+    }
+}
+
+/**
+ * Which of the two camera paths is in use — the user's explicit choice.
+ *
+ * This used to be inferred: a non-blank snapshot URL silently outranked the stream. That
+ * made a filled-in field the *only* way to express a preference, so the two settings could
+ * never both be filled in and only one of them could ever be tried.
+ *
+ * The stored values (`rtsp`, `http`) are the `entryValues` of the settings dropdown, so they
+ * are part of the persisted contract — see [ConfigKeys.SOURCE].
+ */
+enum class CameraSource {
+    /** One RTSP session carries the picture and its audio. The default. */
+    RTSP,
+
+    /** Polled JPEGs over HTTP, with audio from a separate RTSP stream. */
+    HTTP;
+
+    companion object {
+        /**
+         * Resolves a stored value, falling back to [RTSP] for anything unrecognised.
+         *
+         * Same contract as the parser's numeric helpers: a hand-edited or corrupted
+         * preference must become a legal value here rather than throwing somewhere
+         * downstream that has no idea what to do about it.
+         */
+        fun of(raw: String?): CameraSource =
+            entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: RTSP
+    }
+}
+
+/**
+ * The selected camera path, resolved to the fields that path actually uses.
+ *
+ * Two jobs, both of which the flat [DomofonConfig.Camera] record does badly:
+ *
+ * 1. **Illegal states stop existing.** A source is handed exactly its own URLs, so no code
+ *    below this point can read the other path's settings or has to ask which path it is on.
+ * 2. **It is the session restart key.** These are `data class`es, so equality is structural,
+ *    and [DomofonConfig.Camera.snapshotSecs] is deliberately *not* a member: the grabber
+ *    reopens on any change to this value, and a cadence tweak must not cost an RTSP
+ *    handshake. Cadence is read live instead.
+ */
+sealed interface CameraFeed {
+
+    /** One media3 session for stills and sound both. */
+    data class Rtsp(
+        val url: String,
+        val audioEnabled: Boolean,
+    ) : CameraFeed
+
+    /**
+     * A JPEG endpoint polled for stills, plus an optional audio-only RTSP stream.
+     *
+     * [audioUrl] is blank when there is no sound to play — either the switch is off or the
+     * user never set one — and stills-only is a perfectly good configuration, so that is not
+     * an error state.
+     */
+    data class Http(
+        val imageUrl: String,
+        val audioUrl: String,
+        val audioEnabled: Boolean,
+    ) : CameraFeed {
+        /** Whether a separate audio session should be opened alongside the stills. */
+        val hasAudio: Boolean get() = audioEnabled && audioUrl.isNotBlank()
     }
 }

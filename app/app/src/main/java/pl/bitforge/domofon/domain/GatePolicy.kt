@@ -1,5 +1,7 @@
 package pl.bitforge.domofon.domain
 
+import pl.bitforge.domofon.domain.camera.AudioStatus
+
 /**
  * The presentation rules every surface shares — worded and decided once, so the phone
  * panel, the car screen and the notification can never disagree.
@@ -63,5 +65,22 @@ object GatePolicy {
                     if (state == STATE_UNKNOWN) "Gate — no state reported"
                     else "Gate — $state"
             }
+    }
+
+    /**
+     * Why the gate is silent, when silence is a fault rather than a quiet gate.
+     *
+     * Only the HTTP camera path can produce this: its audio is a separate stream that can die
+     * on its own while stills keep arriving, and nothing else on screen would change. On the
+     * RTSP path audio shares the picture's session, so a failure there is already the camera
+     * status and this stays empty.
+     *
+     * Empty means "render nothing", the same convention as the distance and error lines.
+     * [AudioStatus.CONNECTING] is deliberately silent too: an audio stream takes a moment to
+     * come up, and announcing that would put a line on screen during every normal start.
+     */
+    fun cameraAudioNotice(audio: AudioStatus): String = when (audio) {
+        AudioStatus.ERROR -> "Gate audio unavailable"
+        AudioStatus.NONE, AudioStatus.CONNECTING, AudioStatus.PLAYING -> ""
     }
 }

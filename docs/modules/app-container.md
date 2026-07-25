@@ -63,9 +63,12 @@ Everything constructed *by* the container gets dependencies via constructor inst
 | MQTT connection (`MqttTransport.Handle`) | `GateService.teardown()` |
 | A holder's claim (`ConnectionLease`) | the surface: onStop/onDestroy/`use {}` |
 | EGL context (`OffscreenTextureReader`) | `RtspFrameSource.close()` (player first) |
-| Camera session (either source) | `CameraFrameGrabber.stop()` |
+| Camera session (whichever source) | `CameraFrameGrabber.stop()`, or `swap()` on a config change |
+| The HTTP path's two halves | `HttpCameraSource.close()` — audio then image, reverse of acquisition |
+| Separate audio player + its looper | `RtspAudioSource.close()` (posts teardown, then `quitSafely`) |
+| The grabber's config-watch scope | `CameraFrameGrabber.stop()`; a stale `swap()` is refused by scope identity |
 | Distance-poll scope | `HomeDistanceTracker.stop()`; parented to appScope as backstop |
-| QML listeners + frame files | `QmlGateBinder.close()` ← `MainActivity.onDestroy` |
+| QML listeners | `QmlGateBinder.close()` ← `MainActivity.onDestroy` |
 | Receiver work | bounded `withTimeoutOrNull` on appScope; `PendingResult.finish()` in `finally` |
 | Everything above at once | `AppContainer.close()` cancels appScope (tests) |
 

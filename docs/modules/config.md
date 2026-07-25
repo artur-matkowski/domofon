@@ -30,8 +30,19 @@ class ConfigStore(context, secrets: SecretStore) {
 
 Slices: consumers take exactly the piece they need (`config.broker`, `.topics`, `.mqtt`,
 `.home`, `.camera`, `.requireUnlockForCommands`); the MQTT layer never sees the home
-coordinates, the geofence never sees the broker password. `config.wire` is the comparable
-value whose change forces a reconnect.
+coordinates, the geofence never sees the broker password.
+
+**Two comparable values drive restarts**, and they are the same idea applied twice:
+
+| Value | Whose restart | Deliberately excludes |
+|---|---|---|
+| `config.wire` | the MQTT connection | everything but broker/topics/mqtt |
+| `config.camera.feed` | the camera source | `camera.snapshotSecs` |
+
+`camera.feed` also resolves the selected path down to just its own fields (`CameraFeed.Rtsp`
+or `.Http`), so no code below `ConfigStore` can read the *other* path's URLs or has to ask
+which path it is on. It is `null` when the selected path's URL is blank, which is the whole of
+`hasPicture`.
 
 ## Invariants
 
@@ -45,8 +56,8 @@ value whose change forces a reconnect.
    and **topic-prefix normalisation to a trailing `/`** — `hc12/rx` typed naturally would
    silently produce `hc12/rxGateOpened`, which the broker happily accepts and nothing ever
    matches.
-3. **Secrets (`broker.password`, both camera URLs — credentials ride inline in them) are
-   Keystore-encrypted at rest** and transparently decrypted on read. The Keystore alias
+3. **Secrets (`broker.password` and all three camera URLs — credentials ride inline in them)
+   are Keystore-encrypted at rest** and transparently decrypted on read. The Keystore alias
    `domofon.config.secrets.v1` is load-bearing: renaming it orphans every stored value.
    Decryption failure (lock-screen change drops app keys) reads as "unset", not an error.
 4. **SharedPreferences, not DataStore** — [decision D8](../architecture/decisions.md):
@@ -69,15 +80,37 @@ value whose change forces a reconnect.
 - Input-type handling in the settings rows is deliberate (no autocorrect on
   host/username, masked passwords, URI inputs whose summaries strip userinfo) — see the
   KDoc in `SettingsActivity`.
+- **`ConfigPreferenceDataStore` overrides only `put/getString` and `put/getBoolean`.** Every
+  other method on the `PreferenceDataStore` base throws `UnsupportedOperationException`, so a
+  `SeekBarPreference` (`getInt`) or `MultiSelectListPreference` (`getStringSet`) row crashes at
+  *inflation*. `ListPreference` and `DropDownPreference` persist a `String` and are safe as-is
+  — which is why the camera source selector is one.
+- **Camera rows are shown and hidden, not disabled.** `CameraSettingsRows` (in `domain/`, so
+  it is testable) says which keys belong to which source; `SettingsFragment` assigns
+  `isVisible` over `ALL` in one loop. The `home.*` rows use `app:dependency` instead, which
+  greys out — right for "this depends on that being on", wrong here, because the other path's
+  URL is not disabled, it is irrelevant.
+- **A `setOnPreferenceChangeListener` fires *before* the value is persisted.** The source
+  selector must therefore act on its `newValue` argument; re-reading the config there applies
+  the previous selection and leaves the screen one change behind for good.
+- Only two things observe `config` reactively: `GateViewModel` (rendering) and, since the
+  camera source became switchable, `CameraFrameGrabber`. Everything else pulls
+  `configStore.current` at a deliberately chosen moment. A new setting that must take effect
+  without leaving the screen has to say so explicitly.
 
 ## Adding a setting
 
 1. Key in `ConfigKeys` (+ `SECRETS` if it must be encrypted at rest).
 2. Field + default in `DomofonConfig` / `Defaults`; parse + validate in
-   `DomofonConfigParser` (add a `DomofonConfigParserTest` case).
-3. Row in `res/xml/preferences.xml` with the *same* key string.
-4. If it affects the connection, decide whether it belongs in `Wire`.
-5. Input handling in `SettingsFragment` if it is a text field.
+   `DomofonConfigParser` (add a `DomofonConfigParserTest` case). Enum-valued settings get a
+   garbage-tolerant `of(raw)` resolver — a hand-edited file must never make the app unusable.
+3. Row in `res/xml/preferences.xml` with the *same* key string; entries in `arrays.xml` if it
+   is a list. Anything other than EditText/Switch/List needs the matching data-store
+   overrides first — see the gotcha above.
+4. If it affects the connection, decide whether it belongs in `Wire`. If it affects the
+   camera, decide whether it belongs in `CameraFeed` (i.e. should it reopen the session).
+5. Input handling in `SettingsFragment` if it is a text field, and add it to
+   `CameraSettingsRows` if it is a camera row that only one source uses.
 
 ## Related pages
 

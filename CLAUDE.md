@@ -28,8 +28,11 @@ unilaterally. When a session solves a problem, append Symptom → Cause → Fix 
   native abort here; frames go through the offscreen EGL reader. Permanent.
 - **`ALLOW_ALL_HOSTS_VALIDATOR` is debug-only, permanently** — it is the entire security
   boundary of the exported car service.
-- **The camera is one RTSP URL** — the HTTP snapshot URL is an optional override, never a
-  requirement.
+- **The camera has two user-selected paths, and RTSP is the default** — RTSP alone must
+  always be enough, because the HTTP path (a polled JPEG URL plus a separate audio-only RTSP
+  stream) needs a restreamer someone set up. No URL is composed in code and no camera brand is
+  named. Corollary: **never two RTSP sessions to the camera** — the audio stream points at a
+  restreamer, never at the camera itself.
 - No 24/7 connection: MQTT exists only while a `ConnectionLease` is held.
 - Build stack is fragile: AGP 9 built-in Kotlin (no KSP/kapt/Compose), Qt Gradle Plugin
   1.4 nested build, pinned NDK r27c, CMake target `domofon` + URI `DomofonQml` frozen.

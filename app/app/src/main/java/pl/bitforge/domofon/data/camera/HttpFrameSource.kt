@@ -1,6 +1,5 @@
 package pl.bitforge.domofon.data.camera
 
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -10,7 +9,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.domain.config.CameraFeed
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -20,30 +19,34 @@ import java.util.Base64
 import kotlin.coroutines.coroutineContext
 
 /**
- * Stills from an HTTP endpoint that returns a JPEG — the **optional** camera source.
+ * Stills polled from an HTTP endpoint that returns one JPEG per request.
  *
- * [RtspFrameSource] is the one the app is built around, because RTSP is the single address
- * every camera speaks and every user already has. This exists for the cases where pulling
- * frames from the stream is not what you want: a camera whose decoder the device dislikes, a
- * go2rtc or Frigate deployment that is already producing frames anyway, or simply a link
- * that costs less over a metered tunnel than a video stream does.
+ * The picture half of the HTTP camera path; [HttpCameraSource] pairs it with the audio half.
+ * It is not an override of [RtspFrameSource] any more — the user picks between the two — but
+ * it is still second in the sense that matters: RTSP is the only path that works with nothing
+ * but the camera, so it stays the default for a fresh install.
  *
- * It is second, not first, and that ordering is a product decision rather than a technical
- * one. Snapshot endpoints are vendor-specific (`/ISAPI/…` on Hikvision, `/cgi-bin/…` on
- * Dahua, something else on the next brand) and frequently Digest-only, which
- * `HttpURLConnection` does not speak. An app that *required* one would only ever work for
- * people who know their camera's firmware — see docs/modules/camera.md.
+ * The reason this path exists at all is a restreamer in front of the camera. Snapshot
+ * endpoints straight off a camera are vendor-specific (`/ISAPI/…` on Hikvision, `/cgi-bin/…`
+ * on Dahua, something else on the next brand) and frequently Digest-only, which
+ * `HttpURLConnection` does not speak. Point it at Frigate or go2rtc and both problems belong
+ * to something else — see docs/modules/camera.md.
  */
 class HttpFrameSource(
-    private val configStore: ConfigStore,
-    private val onFrame: (Bitmap) -> Unit,
+    private val feed: CameraFeed.Http,
+    /**
+     * The poll gap, read per iteration rather than captured: retuning the interval in
+     * Settings must take effect on the next fetch without tearing the session down.
+     */
+    private val intervalMs: () -> Long,
+    private val onFrame: (CameraFrame) -> Unit,
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
-) : AutoCloseable {
+) : FrameSource {
 
     private var scope: CoroutineScope? = null
 
     @Synchronized
-    fun start() {
+    override fun start() {
         if (scope != null) return
         onStatus(CameraFrameGrabber.Status.CONNECTING)
         val started = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -62,19 +65,11 @@ class HttpFrameSource(
 
     private suspend fun poll() {
         while (coroutineContext.isActive) {
-            // Read per iteration, so an edit in Settings takes effect on the next fetch
-            // rather than at the next start().
-            val camera = configStore.current.camera
-            if (camera.snapshotUrl.isBlank()) {
-                onStatus(CameraFrameGrabber.Status.IDLE)
-                delay(RETRY_MS)
-                continue
-            }
-            val bitmap = fetch(camera.snapshotUrl)
-            if (bitmap != null) {
-                onFrame(bitmap)
+            val frame = fetch(feed.imageUrl)
+            if (frame != null) {
+                onFrame(frame)
                 onStatus(CameraFrameGrabber.Status.STREAMING)
-                delay(camera.snapshotSecs * 1000L)
+                delay(intervalMs())
             } else {
                 // The last good frame stays on screen. A gate picture from thirty seconds
                 // ago is worth more than a placeholder, as long as the status says so.
@@ -84,9 +79,9 @@ class HttpFrameSource(
         }
     }
 
-    private fun fetch(rawUrl: String): Bitmap? {
+    private fun fetch(rawUrl: String): CameraFrame? {
         val request = Request.of(rawUrl) ?: run {
-            Log.w(TAG, "camera: the snapshot URL is not a valid http(s) URL")
+            Log.w(TAG, "camera: the image URL is not a valid http(s) URL")
             return null
         }
         var connection: HttpURLConnection? = null
@@ -103,7 +98,7 @@ class HttpFrameSource(
                 logHttpFailure(code, connection)
                 null
             } else {
-                connection.inputStream.use { readCapped(it) }?.let { decodeDownscaled(it) }
+                connection.inputStream.use { readCapped(it) }?.let { decode(it) }
             }
         } catch (e: Exception) {
             // The class name, never the message and never the URL: both can carry the
@@ -124,11 +119,11 @@ class HttpFrameSource(
             // never arrive. HttpURLConnection speaks Basic only, and most Hikvision/Dahua
             // firmware insists on Digest — which is the whole reason RTSP is the default
             // source and this one is the override.
-            Log.w(TAG, "camera: the snapshot endpoint requires Digest auth, which this " +
-                "client does not speak — clear the snapshot URL and use RTSP, or put " +
-                "go2rtc in front (docs/modules/camera.md)")
+            Log.w(TAG, "camera: the image endpoint requires Digest auth, which this " +
+                "client does not speak — switch the camera source to RTSP, or put " +
+                "go2rtc or Frigate in front of it (docs/modules/camera.md)")
         } else {
-            Log.w(TAG, "camera: snapshot HTTP $code")
+            Log.w(TAG, "camera: image HTTP $code")
         }
     }
 
@@ -156,14 +151,21 @@ class HttpFrameSource(
     }
 
     /**
-     * Decodes to at most [CameraFrameGrabber.MAX_EDGE] on the long side.
+     * Decodes to at most [CameraFrameGrabber.MAX_EDGE] on the long side, keeping the fetched
+     * bytes when they are already small enough to hand on verbatim.
      *
      * The bitmap crosses the binder inside the car template bundle, where a full-resolution
      * frame courts `TransactionTooLarge` — the camera this was written against answers its
      * snapshot endpoint with 1.3 MB of main-stream JPEG. Bounds pass first so the sample size
      * comes from the real geometry.
+     *
+     * The bytes are reusable only when nothing was scaled away, which the bounds pass settles
+     * before any pixels are decoded: at or under the cap, `inSampleSize` stays 1 and the
+     * bitmap *is* the response, so [CameraFrame] can carry the server's own encoding to QML
+     * instead of a re-compression of it. Above the cap they are dropped — passing on the
+     * original would ship the full-resolution frame the downscale existed to avoid.
      */
-    private fun decodeDownscaled(jpeg: ByteArray): Bitmap? {
+    private fun decode(jpeg: ByteArray): CameraFrame? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
@@ -172,12 +174,17 @@ class HttpFrameSource(
             Log.w(TAG, "camera: the response was not a decodable image")
             return null
         }
+        val longEdge = maxOf(bounds.outWidth, bounds.outHeight)
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= CameraFrameGrabber.MAX_EDGE) {
+        while (longEdge / (sample * 2) >= CameraFrameGrabber.MAX_EDGE) {
             sample *= 2
         }
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
+        val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts) ?: return null
+        return CameraFrame(
+            bitmap = bitmap,
+            sourceJpeg = if (longEdge <= CameraFrameGrabber.MAX_EDGE) jpeg else null,
+        )
     }
 
     /** A snapshot URL split into what [HttpURLConnection] can actually act on. */

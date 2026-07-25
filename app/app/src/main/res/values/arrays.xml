@@ -12,4 +12,16 @@
         <item>1</item>
         <item>2</item>
     </string-array>
+
+    <!-- The entryValues are CameraSource names, matched case-insensitively by
+         CameraSource.of(). Anything unrecognised resolves to RTSP rather than throwing, so a
+         hand-edited preferences file cannot leave the camera panel permanently blank. -->
+    <string-array name="camera_source_entries">
+        <item>RTSP stream (default)</item>
+        <item>JPEG over HTTP + separate audio</item>
+    </string-array>
+    <string-array name="camera_source_values">
+        <item>RTSP</item>
+        <item>HTTP</item>
+    </string-array>
 </resources>

@@ -57,6 +57,14 @@ class AppContainer(app: Application) : AutoCloseable {
     /** The single state-change→notification collector; started once by [DomofonApp]. */
     val gateEventNotifier = GateEventNotifier(app, gateService, gateNotifier, appScope)
 
+    init {
+        // Upgrade hygiene, once per process and cheap. Frames used to reach QML as a pair of
+        // cache files; they now cross as data URIs and nothing writes these any more, but an
+        // install upgrading from that build still has the last two gate pictures on disk and
+        // nothing left that would ever delete them.
+        repeat(2) { java.io.File(app.cacheDir, "camera-frame-$it.jpg").delete() }
+    }
+
     /** A per-surface camera still producer; the caller starts/stops it with its lifecycle. */
     fun newCameraGrabber(context: Context) =
         CameraFrameGrabber(context.applicationContext, configStore)
@@ -73,7 +81,7 @@ class AppContainer(app: Application) : AutoCloseable {
     ) = GateViewModel(
         gate = gateService,
         config = configStore.config,
-        cameraStatus = grabber.status,
+        cameraHealth = grabber.health,
         frame = grabber.frame,
         distance = tracker.distance,
         scope = scope,

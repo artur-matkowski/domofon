@@ -2,6 +2,7 @@ package pl.bitforge.domofon.domain
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import pl.bitforge.domofon.domain.camera.AudioStatus
 
 class GatePolicyTest {
 
@@ -81,6 +82,16 @@ class GatePolicyTest {
                     line(ConnectionStatus.DEGRADED, bridge, state),
                 )
             }
+        }
+    }
+
+    @Test
+    fun `only a failed audio stream is worth a line`() {
+        assertEquals("Gate audio unavailable", GatePolicy.cameraAudioNotice(AudioStatus.ERROR))
+        // Everything else renders nothing. CONNECTING especially: an audio stream takes a
+        // moment to come up, and announcing that would put a line on screen at every start.
+        listOf(AudioStatus.NONE, AudioStatus.CONNECTING, AudioStatus.PLAYING).forEach { status ->
+            assertEquals("$status", "", GatePolicy.cameraAudioNotice(status))
         }
     }
 }

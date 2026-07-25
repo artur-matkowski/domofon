@@ -131,7 +131,7 @@ class GateScreen(
     private fun cameraTemplate(state: GateUiState): Template {
         val frame = viewModel.frame.value
         val image =
-            if (frame != null) CarIcon.Builder(IconCompat.createWithBitmap(frame)).build()
+            if (frame != null) CarIcon.Builder(IconCompat.createWithBitmap(frame.bitmap)).build()
             else themedIcon(R.drawable.ic_camera_off)
 
         // Exactly one row, always — the shape of this template must not change between

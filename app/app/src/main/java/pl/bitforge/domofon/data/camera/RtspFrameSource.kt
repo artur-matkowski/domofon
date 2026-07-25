@@ -1,7 +1,6 @@
 package pl.bitforge.domofon.data.camera
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -14,7 +13,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
-import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.domain.config.CameraFeed
 
 /**
  * Stills — and, when the user wants it, audio — pulled straight out of the RTSP stream, the
@@ -29,13 +28,14 @@ import pl.bitforge.domofon.data.config.ConfigStore
  * alike. Playing audio does not touch the CPU-frame path the `nativeCreatePlanes` abort was
  * about (docs/modules/camera.md), so it is safe here.
  *
- * This is a deliberate return to the source the app started with, after an HTTP snapshot
- * detour. The detour worked, but it made the app *deployment-shaped*: the gate camera here
- * answers snapshots only at `/ISAPI/Streaming/channels/101/picture` (Hikvision) and only
- * with Digest auth, so a published app would have to either ship a table of vendor paths or
- * require the user to run a restreamer. Neither is something a stranger installing this from
- * Play can do. RTSP is universal, the user already has that URL for their own player, and it
- * authenticates itself.
+ * ([RtspAudioSource] does open a second session, and that is not a contradiction: it points
+ * at a *restreamer*, not at the camera. One ingest, many clients. Never aim both at the same
+ * device.)
+ *
+ * This is the source the app is built around, and the default a fresh install gets. The
+ * alternative HTTP path needs a restreamer someone deliberately set up; RTSP is universal,
+ * the user already has that URL for their own player, and it authenticates itself. That is a
+ * product decision, recorded as D3 in docs/architecture/decisions.md.
  *
  * The pixels come back through [OffscreenTextureReader] rather than an `ImageReader`, which
  * is the entire reason this is safe now — see that class, and docs/troubleshooting.md → `nativeCreatePlanes`.
@@ -45,19 +45,25 @@ import pl.bitforge.domofon.data.config.ConfigStore
  * second interval that is most of the duty cycle anyway, for worse latency and more churn.
  * What bounds the cost instead is *when* this runs: only while the phone UI is in the
  * foreground or a car session is live, exactly like the MQTT connection. If bandwidth
- * matters over the tunnel, point the setting at the camera's **substream** (on this
- * Hikvision, channel 102) — a 640 px still needs nothing more.
+ * matters over the tunnel, point the setting at the camera's **substream** — a 960 px still
+ * needs nothing more.
  *
  * Threading: everything below runs on [thread]'s looper, which is also the player's looper
- * and the EGL context's thread. [start] and [stop] merely post onto it.
+ * and the EGL context's thread. [start] and [close] merely post onto it.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class RtspFrameSource(
     private val context: Context,
-    private val configStore: ConfigStore,
-    private val onFrame: (Bitmap) -> Unit,
+    private val feed: CameraFeed.Rtsp,
+    /**
+     * Seconds-to-millis between captured stills, read per frame rather than captured: the
+     * decoder produces frames continuously and this only decides which become bitmaps, so a
+     * settings change can land on the very next frame without touching the session.
+     */
+    private val intervalMs: () -> Long,
+    private val onFrame: (CameraFrame) -> Unit,
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
-) : AutoCloseable {
+) : FrameSource {
 
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
@@ -82,7 +88,7 @@ class RtspFrameSource(
     }
 
     @Synchronized
-    fun start() {
+    override fun start() {
         if (thread != null) return
         val t = HandlerThread("camera-rtsp").also { it.start() }
         thread = t
@@ -116,11 +122,6 @@ class RtspFrameSource(
     private fun startAttempt() {
         val h = handler ?: return
         if (!started || player != null) return
-        val url = configStore.current.camera.rtspUrl
-        if (url.isBlank()) {
-            onStatus(CameraFrameGrabber.Status.IDLE)
-            return
-        }
         onStatus(CameraFrameGrabber.Status.CONNECTING)
         streaming = false
         loggedAudioCodec = false
@@ -140,10 +141,10 @@ class RtspFrameSource(
         val p = ExoPlayer.Builder(context).setLooper(h.looper).build()
         player = p
         // Audio rides this same session when the user wants it (a second RTSP connection is
-        // what this camera refuses — see the class note). Read fresh so the setting lands on
-        // the next connect; the track is disabled outright when off, so a muted stream decodes
-        // no audio at all.
-        val audio = configStore.current.camera.audioEnabled
+        // what this camera refuses — see the class note). The track is disabled outright when
+        // off, so a muted stream decodes no audio at all. The switch is part of the feed
+        // identity, so flipping it reopens the session through the grabber.
+        val audio = feed.audioEnabled
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !audio)
             .build()
@@ -187,7 +188,7 @@ class RtspFrameSource(
         // survives it; over TCP the video rides the session RTSP itself already proved works.
         val source = RtspMediaSource.Factory()
             .setForceUseRtpTcp(true)
-            .createMediaSource(MediaItem.fromUri(url))
+            .createMediaSource(MediaItem.fromUri(feed.url))
         p.setMediaSource(source)
         p.setVideoSurface(textureReader.surface)
         p.playWhenReady = true
@@ -205,8 +206,7 @@ class RtspFrameSource(
         // decoder produces every frame regardless; `capture` only decides whether this one
         // becomes a Bitmap. Skipping the call entirely would stall the decoder — the buffer
         // has to be returned either way.
-        val snapshotMs = configStore.current.camera.snapshotSecs * 1000L
-        val capture = !streaming || now - lastSnapshotAt >= snapshotMs
+        val capture = !streaming || now - lastSnapshotAt >= intervalMs()
 
         val size = p.videoSize
         val bitmap = try {
@@ -223,7 +223,9 @@ class RtspFrameSource(
             streaming = true
             handler?.removeCallbacks(watchdogRunnable)
         }
-        onFrame(bitmap)
+        // No source JPEG to pass on: these pixels came back from glReadPixels as ARGB, so
+        // the bridge's copy is encoded on demand.
+        onFrame(CameraFrame(bitmap))
         onStatus(CameraFrameGrabber.Status.STREAMING)
     }
 

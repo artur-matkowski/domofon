@@ -163,15 +163,25 @@
 
     <PreferenceCategory app:title="@string/pref_cat_camera">
 
-        <!-- Credentials go inside both URLs (scheme://user:pass@host/…), which is why there
-             are no separate username/password fields and why the summaries are supplied in
-             code: the simple provider would print the password on the list row.
+        <!-- The rows below are shown and hidden per source by SettingsFragment, driven by
+             CameraSettingsRows — the other path's URLs are not disabled, they are irrelevant,
+             and a greyed-out row still showing a value reads as a bug.
 
-             RTSP first, and it is the only one anybody should need: every camera speaks it,
-             the user already has the address, and it authenticates itself. The snapshot URL
-             below overrides it for anyone with a reason — HTTP snapshot paths are
-             vendor-specific and often Digest-only, so requiring one would mean the app only
-             worked for people who know their camera's firmware. See docs/04 §1. -->
+             DropDownPreference is a ListPreference, so it persists a String and needs nothing
+             added to ConfigPreferenceDataStore. A SeekBar or MultiSelect row would throw at
+             inflation instead: the data store implements only put/getString and put/getBoolean.
+             See docs/modules/config.md. -->
+        <DropDownPreference
+            app:key="camera.source"
+            app:title="@string/pref_camera_source"
+            app:entries="@array/camera_source_entries"
+            app:entryValues="@array/camera_source_values"
+            app:defaultValue="RTSP"
+            app:useSimpleSummaryProvider="true"/>
+
+        <!-- Credentials go inside every one of these URLs (scheme://user:pass@host/…), which
+             is why there are no separate username/password fields and why the summaries are
+             supplied in code: the simple provider would print the password on the list row. -->
         <EditTextPreference
             app:key="camera.rtspUrl"
             app:title="@string/pref_rtsp_url"/>
@@ -181,13 +191,17 @@
             app:title="@string/pref_snapshot_url"/>
 
         <EditTextPreference
+            app:key="camera.audioUrl"
+            app:title="@string/pref_audio_url"/>
+
+        <EditTextPreference
             app:key="camera.snapshotSecs"
             app:title="@string/pref_snapshot_secs"
             app:summary="@string/pref_snapshot_secs_summary"/>
 
-        <!-- Audio comes from the RTSP stream only (the snapshot override carries none), and
-             plays while a camera view is open. On by default; off silences the gate without
-             unsetting the URL. See docs/04 §2. -->
+        <!-- Plays while a camera view is open, on both paths: the RTSP session's own audio
+             track, or the separate stream above. On by default; off silences the gate without
+             unsetting any URL. See docs/modules/camera.md. -->
         <SwitchPreferenceCompat
             app:key="camera.audioEnabled"
             app:title="@string/pref_audio"

@@ -25,17 +25,23 @@ Kotlin → QML (written only by `QmlGateBinder.render`):
 |---|---|---|
 | `statusText` | string | The one status line, worded by `GatePolicy`; "" hides |
 | `lastError` | string | Why the last command failed; "" hides (20 s TTL upstream) |
-| `cameraFrame` | string | `file://` URL of the newest still — see the alternating-file invariant in [ui-phone](ui-phone.md) |
+| `cameraFrame` | string | `data:image/jpeg;base64,…` holding the newest still itself — see the invariant in [ui-phone](ui-phone.md) |
 | `cameraStatus` | string | `CameraFrameGrabber.Status.name.lowercase()` |
 | `cameraConfigured` | bool | Gates the whole camera panel |
+| `audioNotice` | string | Why the gate is silent, worded by `GatePolicy`; "" hides. Only ever set on the HTTP camera path |
 | `homeDistance` | string | Pre-formatted distance line; "" hides |
 
 QML → Kotlin: `signal commandRequested(string action)` · `signal settingsRequested()`.
 
-**Rules:** only primitives cross (a Bitmap cannot); properties stay per-field (batching
-into JSON would defeat the typed setters and QML's per-property binding — consistency is
-guaranteed below the bridge by `render` being the only writer); writes before
-`QtQmlStatus.READY` are silently dropped (the binder gates and seeds).
+**Rules:** only primitives cross (a Bitmap cannot — which is why the frame travels as a
+base64 string); properties stay per-field (batching into JSON would defeat the typed setters
+and QML's per-property binding — consistency is guaranteed below the bridge by `render` being
+the only writer); writes before `QtQmlStatus.READY` are silently dropped (the binder gates and
+seeds).
+
+`cameraFrame` is the one property that is not a small value: a ≤960 px JPEG is a few tens of
+KB and base64 costs a third more. That is affordable at one frame every few seconds and would
+not be at video rates — the frame *rate*, not the bridge, is what makes this design work.
 
 ## The scene (Main.qml)
 

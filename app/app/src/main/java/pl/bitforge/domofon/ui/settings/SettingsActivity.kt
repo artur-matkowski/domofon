@@ -18,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.preference.DropDownPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
@@ -26,6 +27,8 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.container
+import pl.bitforge.domofon.domain.config.CameraSettingsRows
+import pl.bitforge.domofon.domain.config.CameraSource
 import pl.bitforge.domofon.domain.config.ConfigKeys
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
 import pl.bitforge.domofon.data.mqtt.GateService
@@ -193,6 +196,9 @@ class SettingsActivity : AppCompatActivity() {
 
             credentialUrl(ConfigKeys.SNAPSHOT_URL, R.string.pref_snapshot_url_summary)
             credentialUrl(ConfigKeys.RTSP_URL, R.string.pref_rtsp_url_summary)
+            credentialUrl(ConfigKeys.AUDIO_URL, R.string.pref_audio_url_summary)
+
+            cameraSourceRows()
 
             // Switching the geofence on is the user asking for the feature — and the only
             // moment at which asking for background location is justified.
@@ -201,6 +207,33 @@ class SettingsActivity : AppCompatActivity() {
                     if (enabled == true) (activity as? SettingsActivity)?.startLocationFlow()
                     true
                 }
+        }
+
+        /**
+         * Shows only the camera rows the selected source actually uses.
+         *
+         * The rule itself is [CameraSettingsRows] so a JVM test can reach it; this is the
+         * half that cannot be tested and therefore does as little as possible — one loop,
+         * no knowledge of which field belongs to which path.
+         *
+         * **The listener must use its `newValue` argument.** `OnPreferenceChangeListener`
+         * fires *before* the value is persisted, so re-reading the config here would apply
+         * the previous selection and leave the screen one change behind for good.
+         */
+        private fun cameraSourceRows() {
+            val selector = findPreference<DropDownPreference>(ConfigKeys.SOURCE) ?: return
+            applyCameraRows(CameraSource.of(selector.value))
+            selector.setOnPreferenceChangeListener { _, newValue ->
+                applyCameraRows(CameraSource.of(newValue as? String))
+                true
+            }
+        }
+
+        private fun applyCameraRows(source: CameraSource) {
+            val visible = CameraSettingsRows.visible(source)
+            for (key in CameraSettingsRows.ALL) {
+                findPreference<Preference>(key)?.isVisible = key in visible
+            }
         }
 
         /**

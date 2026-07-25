@@ -47,8 +47,15 @@ parsing, no policy here — everything renders `GateViewModel`'s derived state.
 
 ## Gotchas
 
-- The frame bitmap crosses the binder inside the template bundle — the 960 px cap in
-  [camera](camera.md) is what keeps it under `TransactionTooLarge`.
+- The frame bitmap (`CameraFrame.bitmap`) crosses the binder inside the template bundle — the
+  960 px cap in [camera](camera.md) is what keeps it under `TransactionTooLarge`. The frame's
+  JPEG half is never touched here: it is encoded lazily, so a car session never pays for the
+  phone bridge's copy.
+- The car surface deliberately ignores `GateUiState.audioNotice`. A dead audio stream on the
+  HTTP camera path must not add or remove a row, for exactly the reason in invariant 2 — the
+  pane's shape has to stay constant or the host dims the screen.
+- Switching the camera source on the phone swaps the source under a live car session. The last
+  frame survives the swap by design, so the pane keeps a picture and its shape throughout.
 - Real-car installs need a Play trusted source (Internal App Sharing / test track) —
   "Unknown sources" does not apply to Car App Library apps. The DHU
   (`scripts/dhu.sh`, Passat-profile ini) is the everyday test rig.

@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import org.qtproject.example.domofon.DomofonQml.Main
+import pl.bitforge.domofon.domain.camera.jpegDataUri
 import pl.bitforge.domofon.ui.shared.GateUiState
 import pl.bitforge.domofon.ui.shared.GateViewModel
 
@@ -21,13 +22,17 @@ import pl.bitforge.domofon.ui.shared.GateViewModel
  * missed in the meantime.
  *
  * [close] disconnects both signal listeners — they hold the enclosing activity through
- * their lambdas on the Qt side, and were previously never disconnected — and clears the
- * frame files. Owned by MainActivity, closed from its onDestroy.
+ * their lambdas on the Qt side, and were previously never disconnected. Owned by
+ * MainActivity, closed from its onDestroy.
+ *
+ * Frames cross as `data:` URIs rather than `file://` URLs to a pair of cache files. The
+ * files worked, but a gate picture was briefly on disk for every frame and outlived the app
+ * whenever the process was killed before [close] ran — which is the *normal* restart here,
+ * since Qt loads once per process. See [jpegDataUri].
  */
 class QmlGateBinder(
     private val mainQml: Main,
     private val viewModel: GateViewModel,
-    private val frames: FrameFileStore,
     scope: CoroutineScope,
     private val onSettingsRequested: () -> Unit,
 ) : AutoCloseable {
@@ -46,7 +51,7 @@ class QmlGateBinder(
             .launchIn(scope)
 
         viewModel.frame
-            .onEach { bitmap -> if (ready && bitmap != null) mainQml.cameraFrame = frames.write(bitmap) }
+            .onEach { frame -> if (ready && frame != null) mainQml.cameraFrame = jpegDataUri(frame.jpeg) }
             .launchIn(scope)
     }
 
@@ -62,7 +67,7 @@ class QmlGateBinder(
     fun onQmlReady() {
         ready = true
         render(viewModel.uiState.value)
-        viewModel.frame.value?.let { mainQml.cameraFrame = frames.write(it) }
+        viewModel.frame.value?.let { mainQml.cameraFrame = jpegDataUri(it.jpeg) }
 
         if (commandListenerId != 0 || settingsListenerId != 0) return
         commandListenerId = mainQml.connectCommandRequestedListener { _, action ->
@@ -78,6 +83,7 @@ class QmlGateBinder(
         mainQml.lastError = state.lastError
         mainQml.cameraConfigured = state.cameraConfigured
         mainQml.cameraStatus = state.cameraStatus.name.lowercase()
+        mainQml.audioNotice = state.audioNotice
         mainQml.homeDistance = state.homeDistance
     }
 
@@ -87,6 +93,5 @@ class QmlGateBinder(
         if (settingsListenerId != 0) mainQml.disconnectSignalListener(settingsListenerId)
         commandListenerId = 0
         settingsListenerId = 0
-        frames.deleteAll()
     }
 }
