@@ -96,6 +96,12 @@ Rectangle {
             // stays up.
             property bool showA: true
 
+            // What the box says when it is not streaming, used by both readouts below.
+            // "Connecting…" covers idle too: a panel that is not streaming is either on its
+            // way up or on its way back, and neither is a state the user can act on.
+            readonly property string statusLine:
+                root.cameraStatus === "error" ? "Camera unreachable" : "Connecting…"
+
             Connections {
                 target: root
                 function onCameraFrameChanged() {
@@ -133,12 +139,41 @@ Rectangle {
                 onStatusChanged: if (status === Image.Ready && cameraPanel.showA) cameraPanel.showA = false
             }
 
+            // Nothing has ever arrived: the whole box is the message.
             Text {
                 anchors.centerIn: parent
                 visible: root.cameraFrame === ""
-                text: root.cameraStatus === "error" ? "Camera unreachable" : "Connecting…"
+                text: cameraPanel.statusLine
                 color: Theme.muted
                 font.pixelSize: root.unit * 4
+            }
+
+            // A picture is up, but it is not current any more.
+            //
+            // The still deliberately survives a source change and a failure (the wiki's
+            // camera invariant 4: a gate picture from thirty seconds ago beats a
+            // placeholder). The cost was that it survived *silently* — a reopen that never
+            // connected looked exactly like one that did, because this box only ever spoke
+            // when it had nothing at all to show. Hence a badge rather than a takeover:
+            // small, cornered, and gone the moment frames resume.
+            Rectangle {
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.margins: root.unit
+                width: staleLabel.implicitWidth + root.unit * 2
+                height: staleLabel.implicitHeight + root.unit
+                radius: root.unit / 2
+                color: Theme.base
+                opacity: 0.85
+                visible: root.cameraFrame !== "" && root.cameraStatus !== "streaming"
+
+                Text {
+                    id: staleLabel
+                    anchors.centerIn: parent
+                    text: cameraPanel.statusLine
+                    color: Theme.muted
+                    font.pixelSize: root.unit * 3
+                }
             }
         }
 

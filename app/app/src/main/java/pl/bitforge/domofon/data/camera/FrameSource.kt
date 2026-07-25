@@ -17,9 +17,19 @@ package pl.bitforge.domofon.data.camera
  *   configuration says.
  * - [close] is idempotent and never throws. Closing a source that never started, or closing
  *   twice, is always safe — the house RAII rule.
+ * - **A source holding a session at the camera must not return from [close] until it has let
+ *   go of it**, within a bounded wait. The camera allows exactly one RTSP session, so the
+ *   grabber's "close, then open" is only true if close is true; a close that merely *posts*
+ *   its teardown turns a settings change into a refused connection and a 30 s backoff. It is
+ *   never called on the UI thread (see `CameraFrameGrabber.sessions`). A source with nothing
+ *   to hand back — a poll loop over HTTP — may return immediately.
+ * - [close] reports no status. Once the grabber has closed a source it has retired it, and
+ *   may already have started its replacement; a parting IDLE would land on the new session's
+ *   CONNECTING and strand the panel there.
  * - Callbacks arrive on the source's own thread, which is not the caller's. The grabber
  *   funnels them into `StateFlow`s, which are safe to write from anywhere; nothing else may
- *   assume otherwise.
+ *   assume otherwise. Callbacks made after [close] are dropped rather than forbidden — the
+ *   grabber pins each source's sink to a generation.
  * - A source emits frames already downscaled to [CameraFrameGrabber.MAX_EDGE]. That cap is a
  *   binder limit on the car pane, not a preference, so it cannot be left to the consumer.
  * - A failing source keeps retrying on its own schedule until it is closed. It must not

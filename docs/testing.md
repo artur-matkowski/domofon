@@ -49,11 +49,16 @@ Ground rules:
 | `domain/config/CameraSettingsRowsTest` | which camera rows each source shows, and that `ALL` covers every one |
 | `data/mqtt/ConnectionErrorMessagesTest` | cause-chain walk (bounded), name-matched shaded timeouts |
 | `data/mqtt/GateServiceTest` | lease lifecycle, stale-handle silence, wire rebuild, watchdog, backoff, teardown semantics, command paths, awaitFreshState settle |
+| `data/camera/CameraFrameGrabberTest` | session lifecycle: **close completes before the next open**, reopen on a feed change, *no* reopen on an interval change, retired sources cannot report, `stop()`+`start()` never overlap |
 | `ui/shared/GateViewModelTest` | derivation + eager initial value, independent picture/audio health |
 
-`data/camera` still has no direct coverage — nothing in it is JVM-testable. What *is* now
-tested is the part that decides its behaviour: which feed a configuration resolves to, and
-therefore which source the grabber opens and when it reopens.
+What is still untested in `data/camera` is everything that needs a device — the players, the
+EGL readback, the HTTP fetch. The *lifecycle* is now covered: `CameraFrameGrabber` takes flows
+and a source factory rather than a `ConfigStore` and a `Context`, so a fake `FrameSource`
+drives the whole open/close sequence on the JVM. That suite is a regression net for the
+2026-07-25 "changing a camera setting does nothing until you force-stop" bug
+([troubleshooting](troubleshooting.md)) — its fake fails the run outright if a second session
+is opened while one is still live, which is the camera's own rule expressed as a test.
 
 When touching `GateService` semantics, add the scenario *before* changing the code —
 the suite is the regression net this codebase went years without.
@@ -91,6 +96,14 @@ small changes is phone-cold-start + one command + one DHU look.
       screen — and the right rows are showing when the screen is first opened
 - [ ] Switching source with a camera view live (see the car item below) swaps the picture in
       place; the interval field does **not** restart the session
+- [ ] **Edit the RTSP address, come back, and the picture is from the new address** — no
+      force-stop. Repeat four or five times in one app session: the races this checks for
+      (EGL re-setup, handler publication) need repetition to show. Same for the gate audio
+      switch and the source dropdown, both of which reopen the session.
+- [ ] Point the RTSP address at something dead: within ~15 s the panel shows "Camera
+      unreachable" **over the stale picture**, and within ~30 s of pointing it back at a good
+      address it recovers on its own. A stale picture that says nothing is the 2026-07-25 bug
+      returning ([troubleshooting](troubleshooting.md)).
 - [ ] Two-step location flow: disclosure dialog *before* each system prompt
 - [ ] `adb shell run-as pl.bitforge.domofon` shows the stored password **and all three camera
       URLs** as ciphertext

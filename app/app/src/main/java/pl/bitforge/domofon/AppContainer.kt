@@ -65,9 +65,20 @@ class AppContainer(app: Application) : AutoCloseable {
         repeat(2) { java.io.File(app.cacheDir, "camera-frame-$it.jpg").delete() }
     }
 
-    /** A per-surface camera still producer; the caller starts/stops it with its lifecycle. */
-    fun newCameraGrabber(context: Context) =
-        CameraFrameGrabber(context.applicationContext, configStore)
+    /**
+     * A per-surface camera still producer; the caller starts/stops it with its lifecycle.
+     *
+     * The session scope shares [appScope]'s job but runs on `Dispatchers.IO`, and is
+     * deliberately not the surface's: closing an RTSP session blocks until it is really gone
+     * (which is what stops a replacement racing it at the camera), and that must neither run
+     * on the UI thread that called `stop()` nor be cancelled by it. It dies with the
+     * container, which is what makes it deterministic in a test.
+     */
+    fun newCameraGrabber(context: Context) = CameraFrameGrabber(
+        config = configStore.config,
+        sources = CameraFrameGrabber.androidSources(context.applicationContext),
+        sessions = CoroutineScope(appScope.coroutineContext + Dispatchers.IO),
+    )
 
     /** A per-surface distance readout; same ownership rule as the grabber. */
     fun newHomeDistanceTracker(context: Context) =

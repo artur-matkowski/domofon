@@ -174,6 +174,49 @@ append-only history — entries are never rewritten to match later refactors.
 
 ## RTSP / video
 
+- **Symptom**: changing a camera setting — the RTSP address, the source dropdown, the gate
+  audio switch — does not bring the stream back. The panel keeps showing the *old* camera's
+  last picture and says nothing; force-stopping the app is the only thing that fixes it.
+  Phone only, no car session involved. (Reported 2026-07-25.)
+  **Cause**: five separate defects in the teardown/reopen path, any one of which produces the
+  same "nothing happened". The configuration itself was never at fault — it reached the
+  grabber every time.
+  1. `RtspFrameSource.close()` only *posted* its teardown and returned, while
+     `CameraFrameGrabber.swap()` opened the replacement synchronously. Two sessions at a
+     camera that allows one, so the new one was refused and sat out a 30 s backoff. The same
+     gap sat between `stop()` and the next `start()`.
+  2. A failed `OffscreenTextureReader.setup()` emitted ERROR and returned **without arming
+     the retry or the watchdog**, on the reasoning that a device with no EGL context has none
+     to offer. False here: this is rarely the *first* context in the process (Qt holds one for
+     the whole UI), and the interesting one is the second, built moments after another was
+     torn down. One transient failure = camera dead until force-stop.
+  3. The retired source posted `onStatus(IDLE)` from its own thread *after* the replacement
+     had already reported CONNECTING, so a late IDLE landed on top of the live session. A late
+     `onFrame` could likewise deliver a frame from the old URL after a switch.
+  4. `start()` published `handler` *after* posting the work that reads it
+     (`handler = Handler(t.looper).also { it.post { … } }` — Kotlin evaluates the RHS first,
+     and `t.looper` has already blocked until the loop is running). If the player thread won
+     the race, `startAttempt()` found a null handler and gave up silently: no player, no
+     watchdog, no retry. Same code in `RtspAudioSource`.
+  5. `OffscreenTextureReader.release()` called `eglTerminate` on `EGL_DEFAULT_DISPLAY` — one
+     process-wide handle, shared with Qt's scene graph and the platform renderer.
+  And a sixth thing kept all of it invisible: the QML status text was `visible: cameraFrame
+  === ""`, and `cameraFrame` is never cleared once set. A reopen that never connected looked
+  exactly like one that worked.
+  **Fix**: sources that hold a session at the camera now **block until they have let go of it**
+  (bounded, 2 s), and every open and close runs on one serialised queue in the grabber — so
+  "close, then open" is true rather than aspirational, without blocking the UI thread that
+  called `stop()`. A failed EGL setup goes through `failAttempt()` like any other failure.
+  Closed sources report no status at all, and each source's callbacks are pinned to a
+  generation the grabber bumps on every teardown. Handlers are published before anything that
+  reads them, and the cross-thread fields are `@Volatile`. `eglTerminate` is gone —
+  destroying our own context and surface plus `eglReleaseThread()` is the whole job. The panel
+  now shows a small "Camera unreachable" / "Connecting…" badge over a stale picture, so the
+  next failure of this shape announces itself. Covered by `CameraFrameGrabberTest`.
+  **The rule this leaves behind**: a `close()` that only posts its teardown is not a close.
+  If the next thing the caller does is acquire the same exclusive resource, close must be
+  synchronous — and then it must not be called from the main thread.
+
 - **Symptom**: works in `ffplay`, black screen in app.
   **Checklist**: `Multimedia` linked in the QML project's CMake? `INTERNET` permission?
   URL with credentials URL-encoded (`@` in password → `%40`)? Logcat lines from

@@ -14,6 +14,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import pl.bitforge.domofon.domain.config.CameraFeed
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Stills — and, when the user wants it, audio — pulled straight out of the RTSP stream, the
@@ -49,7 +51,9 @@ import pl.bitforge.domofon.domain.config.CameraFeed
  * needs nothing more.
  *
  * Threading: everything below runs on [thread]'s looper, which is also the player's looper
- * and the EGL context's thread. [start] and [close] merely post onto it.
+ * and the EGL context's thread. [start] posts onto it; [close] posts and then **waits**, because
+ * the caller's next act is to open a session to the same camera and this one allows exactly
+ * one (docs/architecture/decisions.md → D3a).
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class RtspFrameSource(
@@ -65,16 +69,21 @@ class RtspFrameSource(
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
 ) : FrameSource {
 
-    private var thread: HandlerThread? = null
-    private var handler: Handler? = null
-    private var player: ExoPlayer? = null
-    private var reader: OffscreenTextureReader? = null
-    private var started = false
+    // Volatile throughout: these are written by whichever thread calls start()/close() and
+    // read by the player thread, and the MessageQueue's own lock only orders what happened
+    // *before* a post — which is precisely not the field writes that follow one.
+    @Volatile private var thread: HandlerThread? = null
+    @Volatile private var handler: Handler? = null
+    @Volatile private var player: ExoPlayer? = null
+    @Volatile private var reader: OffscreenTextureReader? = null
+    @Volatile private var started = false
+
+    // Player-thread only; no cross-thread reads, so plain fields.
     private var lastSnapshotAt = 0L
     private var streaming = false
     private var loggedAudioCodec = false
 
-    private val retryRunnable = Runnable { startAttempt() }
+    private val retryRunnable = Runnable { handler?.let { startAttempt(it) } }
 
     private val watchdogRunnable = Runnable {
         // A camera that answers RTSP but sends no video, or a decoder that quietly refused
@@ -92,35 +101,56 @@ class RtspFrameSource(
         if (thread != null) return
         val t = HandlerThread("camera-rtsp").also { it.start() }
         thread = t
-        handler = Handler(t.looper).also { h ->
-            h.post {
-                started = true
-                startAttempt()
-            }
+        // Publish the handler *before* posting anything that uses it. `t.looper` has already
+        // blocked until the thread's loop is running, so a message posted first can be
+        // dispatched before the field write lands — and the attempt would then find a null
+        // handler and give up silently: no player, no watchdog, no retry, "Connecting…"
+        // until the process is killed.
+        val h = Handler(t.looper)
+        handler = h
+        h.post {
+            started = true
+            startAttempt(h)
         }
     }
 
-    /** Idempotent. Posts the teardown onto the player thread, which then quits itself. */
-    @Synchronized
+    /**
+     * Idempotent, and **blocks until the session is really gone**.
+     *
+     * The caller's next act is usually to open a session to the same camera, which allows
+     * exactly one; returning while `player.release()` is still queued is what turned a
+     * settings change into a 30 s backoff that looked like nothing happening. Bounded, so a
+     * wedged player thread costs a surface teardown a moment rather than the whole app.
+     */
     override fun close() {
-        val t = thread ?: return
-        val h = handler ?: return
-        thread = null
-        handler = null
+        val t: HandlerThread
+        val h: Handler
+        synchronized(this) {
+            t = thread ?: return
+            h = handler ?: return
+            thread = null
+            handler = null
+        }
+        val released = CountDownLatch(1)
         h.post {
             started = false
             h.removeCallbacks(retryRunnable)
             h.removeCallbacks(watchdogRunnable)
             releaseAttempt()
-            onStatus(CameraFrameGrabber.Status.IDLE)
+            // No status on the way out: by the time this runs the grabber has already
+            // retired this source and may have started its replacement, and a late IDLE
+            // landing on top of the new session's CONNECTING strands the panel for good.
             t.quitSafely()
+            released.countDown()
+        }
+        if (!released.await(CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "camera: the player thread did not release within ${CLOSE_TIMEOUT_MS}ms")
         }
     }
 
     // --- player-thread internals --------------------------------------------------------
 
-    private fun startAttempt() {
-        val h = handler ?: return
+    private fun startAttempt(h: Handler) {
         if (!started || player != null) return
         onStatus(CameraFrameGrabber.Status.CONNECTING)
         streaming = false
@@ -129,10 +159,14 @@ class RtspFrameSource(
 
         val textureReader = OffscreenTextureReader()
         if (!textureReader.setup()) {
-            // No EGL context means no frames on this device, ever — retrying would spin
-            // against the same wall. Say so once and stop.
+            // This used to give up for good, on the theory that a device without an EGL
+            // context has none to offer. But this is rarely the *first* context in the
+            // process — Qt holds one for the whole UI — and the interesting case is the
+            // second one, built moments after another was torn down. That fails
+            // transiently, and "for good" meant the camera was dead until a force-stop.
+            // So: an ordinary failure, on the ordinary backoff.
             Log.e(TAG, "camera: could not create the offscreen GL context")
-            onStatus(CameraFrameGrabber.Status.ERROR)
+            failAttempt()
             return
         }
         reader = textureReader
@@ -256,5 +290,14 @@ class RtspFrameSource(
 
         /** Backoff between reconnect attempts, independent of the snapshot interval. */
         const val RETRY_MS = 30_000L
+
+        /**
+         * How long [close] waits for the player thread to let go of the session.
+         *
+         * `ExoPlayer.release()` on a healthy session is milliseconds; the cap is only there
+         * so a wedged decoder cannot hold up a surface teardown indefinitely. Overrunning it
+         * is worth a log line — it means the next open may still meet the old session.
+         */
+        const val CLOSE_TIMEOUT_MS = 2_000L
     }
 }

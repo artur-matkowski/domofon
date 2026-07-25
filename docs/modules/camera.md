@@ -12,7 +12,7 @@ the phone shows the same still.
 | Class | Owns |
 |---|---|
 | `CameraFrameGrabber` | The façade: one `frame` + one `health` flow; opens the source the selected `CameraFeed` asks for, and reopens it when that changes |
-| `FrameSource` | The seam every source implements — `start()` + idempotent `close()`, never throws |
+| `FrameSource` | The seam every source implements — `start()` + idempotent `close()`, never throws; a source holding a camera session blocks in `close()` until it has let go |
 | `CameraFrame` | One frame as both a `Bitmap` (car pane) and JPEG bytes (QML bridge) |
 | `RtspFrameSource` | **The default**: media3 ExoPlayer + RTSP, video → GL surface, audio → speaker; one session carries both |
 | `HttpCameraSource` | The HTTP path's composite: an image source plus an optional audio source, one lifetime |
@@ -23,14 +23,20 @@ the phone shows the same still.
 ## Public API
 
 ```kotlin
-class CameraFrameGrabber(context, configStore) {
+class CameraFrameGrabber(
+    config: StateFlow<DomofonConfig>,
+    sources: SourceFactory,              // CameraFrameGrabber.androidSources(context) in production
+    sessions: CoroutineScope,            // where opens and closes run, serialised; never the UI thread
+) {
     enum class Status { IDLE, CONNECTING, STREAMING, ERROR }
     data class Health(val frames: Status, val audio: AudioStatus)
+    class Sink(frame, status, audioStatus)          // what a source reports to
+    fun interface SourceFactory { fun open(feed, intervalMs, sink): FrameSource }
 
     val frame: StateFlow<CameraFrame?>   // newest still, ≤ MAX_EDGE (960 px) long edge
     val health: StateFlow<Health>
     fun start()                          // no-op unconfigured; safe to repeat
-    fun stop()                           // closes the session; the last frame is kept
+    fun stop()                           // queues the close; the last frame is kept
 }
 ```
 
@@ -71,6 +77,12 @@ a camera configured" (`hasPicture`).
    restreamer while the pictures come from somewhere else. Point both halves of the HTTP path
    at the camera itself and you reproduce the original failure exactly.
    [Decision D3a](../architecture/decisions.md).
+   **This is why `close()` blocks.** A source holding a session must not return from `close()`
+   until it has let go (bounded — 2 s — then a log line), because the caller's next act is
+   usually to open a session to the same camera. A close that merely *posts* its teardown made
+   every camera-settings change look like nothing happening; see
+   [troubleshooting](../troubleshooting.md). The grabber runs every open and close on one
+   serialised queue off the UI thread, which is what makes that affordable.
 3. **The picture and the sound fail independently on the HTTP path.** A dead audio stream
    never touches `Status`, never clears a frame, and never changes the car pane — stills that
    keep arriving are not an error. It surfaces as one muted line on the phone, worded by
@@ -80,7 +92,9 @@ a camera configured" (`hasPicture`).
    change to `camera.snapshotSecs` does not — retuning cadence must not cost an RTSP
    handshake. During the swap `Status` goes CONNECTING and the old frame stays: clearing it
    would blink the phone panel and, worse, change the car pane's *shape* mid-session, which is
-   what makes a head unit dim ([ui-car](ui-car.md)).
+   what makes a head unit dim ([ui-car](ui-car.md)). **The status has to be visible while the
+   frame is stale**, or a reopen that never connected is indistinguishable from one that
+   worked — the phone panel says so on a badge over the picture.
 5. **`MAX_EDGE = 960`** is a binder trade-off, not a style choice: the bitmap crosses the
    binder inside the car template bundle, where a full-resolution frame courts
    `TransactionTooLarge`. If a head unit ever reports that, step down (720 beats the old
@@ -89,22 +103,39 @@ a camera configured" (`hasPicture`).
    handshake over the VPN each time — most of the duty cycle. The bound on cost is *when*
    this runs (foreground surfaces only), not per-snapshot churn.
 7. **Ordering in `releaseAttempt` is load-bearing**: the player must release *before* the
-   reader's surface is destroyed — it must stop writing into the surface first.
-8. **Errors keep the last good frame.** A gate picture from thirty seconds ago is worth
+   reader's surface is destroyed — it must stop writing into the surface first. And
+   `OffscreenTextureReader.release()` gives back **only what it took**: never `eglTerminate`,
+   which is a statement about `EGL_DEFAULT_DISPLAY` — one process-wide handle shared with Qt's
+   scene graph — made by the part of the process that owns the least of it.
+8. **A closed source says nothing.** Once the grabber has closed a source it has retired it
+   and may already have started the replacement, so a parting IDLE would land on the new
+   session's CONNECTING and strand the panel there. Sources emit no status from `close()`, and
+   the grabber pins each source's sink to a generation it bumps on every teardown — so a
+   callback already in flight on the source's own thread is dropped rather than raced.
+9. **Errors keep the last good frame.** A gate picture from thirty seconds ago is worth
    more than a placeholder, as long as `health.frames` says ERROR.
-9. **A source hands on its own JPEG bytes only when it scaled nothing.** `CameraFrame`
-   carries the fetched bytes so the QML bridge can skip a decode/re-encode round trip and
-   deliver the server's own quality choice — but only when the response was already within
-   `MAX_EDGE`. Above it, the original is dropped: passing it on would ship the
-   full-resolution frame the downscale existed to avoid.
-10. **Log hygiene**: never the URL, never exception *messages* from this path (both can
-    embed inline camera credentials) — codes and class names only.
+10. **A source hands on its own JPEG bytes only when it scaled nothing.** `CameraFrame`
+    carries the fetched bytes so the QML bridge can skip a decode/re-encode round trip and
+    deliver the server's own quality choice — but only when the response was already within
+    `MAX_EDGE`. Above it, the original is dropped: passing it on would ship the
+    full-resolution frame the downscale existed to avoid.
+11. **Log hygiene**: never the URL, never exception *messages* from this path (both can
+    embed inline camera credentials) — codes and class names only. The source *kind* (RTSP /
+    HTTP) is fine, and the grabber logs it on every open, so a settings change leaves a trail.
 
 ## Gotchas
 
 - `RtspFrameSource` runs everything on its own `HandlerThread` looper (also the player's
-  looper and the EGL thread); `start`/`close` merely post onto it. `OffscreenTextureReader`
-  is thread-confined by convention — nothing in it is synchronized, deliberately.
+  looper and the EGL thread); `start` posts onto it, `close` posts and waits.
+  `OffscreenTextureReader` is thread-confined by convention — nothing in it is synchronized,
+  deliberately.
+- **Publish the `Handler` before posting anything that reads it.** `handler = Handler(t.looper)
+  .also { it.post { … } }` reads as one statement but is two: Kotlin evaluates the right-hand
+  side first, so the message is enqueued *before* the field is assigned, and `t.looper` has
+  already blocked until the loop is running. The player thread can win that race, find a null
+  handler and give up silently. Everything either side of that boundary is `@Volatile` for the
+  same reason: the `MessageQueue`'s own lock orders what happened *before* a `post`, which is
+  precisely not the writes that follow one.
 - Watchdog (15 s no-frame) exists because a camera that answers RTSP but sends no video
   looks identical to success from the player's side; retry backoff is 30 s.
 - RTP rides **TCP interleaved** (`setForceUseRtpTcp(true)`) — UDP datagrams rarely survive
@@ -122,9 +153,17 @@ a camera configured" (`hasPicture`).
   restreamer that accepts the session but sends no audio looks like success from the player's
   side. Failures are `Log.w` so they survive R8's stripping of the lower levels.
 - The grabber's config collector uses **object identity on the owning scope** as a staleness
-  token. Cancelling a scope cannot interrupt a collector already inside `swap()` and merely
-  waiting on the monitor, so without that check a `stop()` could complete and *then* have a
-  stale swap open a source nobody owns.
+  token: a swap queued by a collector that `stop()` has since cancelled must not open a source
+  nobody owns.
+- **`CameraFrameGrabber` takes flows and a factory, not a `ConfigStore` and a `Context`** —
+  the same move `GateViewModel` made, and for the same reason. *When* a session exists and
+  which one is ordinary logic with no business touching Android; `androidSources()` is the
+  only part of the file that does, and it still holds the whole `when`. That is what
+  `CameraFrameGrabberTest` drives.
+- The grabber's `sessions` scope **outlives the surface on purpose** and is never cancelled by
+  `stop()`: a teardown abandoned half-way leaves a session open at the camera, which is the
+  entire failure this page keeps coming back to. `stop()` queues the close and returns, so the
+  UI thread never blocks; the next `start()` queues behind it.
 - The sources take an `intervalMs: () -> Long` rather than a `ConfigStore`. That is what keeps
   cadence live without putting it in the restart key, and it means `data/camera` no longer
   depends on `data/config` at all.

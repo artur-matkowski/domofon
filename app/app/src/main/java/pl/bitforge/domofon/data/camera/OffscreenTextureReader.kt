@@ -10,6 +10,7 @@ import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.os.Handler
+import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -105,6 +106,9 @@ class OffscreenTextureReader : AutoCloseable {
         surface = Surface(texture)
         true
     } catch (e: Exception) {
+        // Which EGL step refused is the whole diagnosis, and none of these messages can
+        // carry an address — they are the `check` strings below.
+        Log.w(TAG, "camera: EGL setup failed — ${e.message}")
         release()
         false
     }
@@ -165,6 +169,19 @@ class OffscreenTextureReader : AutoCloseable {
         }
     }
 
+    /**
+     * Gives back everything [setup] took — and **nothing else**.
+     *
+     * In particular this must never call `eglTerminate`. `EGL_DEFAULT_DISPLAY` is one
+     * process-wide handle, shared here with Qt's scene graph and the platform's own
+     * renderer; terminating it is a statement about the whole process made by the one part
+     * of it that owns the least. Android's `libEGL` reference-counts `eglInitialize`, so it
+     * usually only decrements and the damage stays theoretical — but this runs on exactly
+     * the path where a *second* context is built moments later, which is where a
+     * "could not create the offscreen GL context" would come from. Destroying our own
+     * context and surface, and releasing this thread's EGL state on a thread that is about
+     * to quit, is the whole of what belongs here.
+     */
     fun release() {
         surface?.release()
         surface = null
@@ -181,7 +198,6 @@ class OffscreenTextureReader : AutoCloseable {
             if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, eglSurface)
             if (context != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(display, context)
             EGL14.eglReleaseThread()
-            EGL14.eglTerminate(display)
         }
         display = EGL14.EGL_NO_DISPLAY
         context = EGL14.EGL_NO_CONTEXT
@@ -302,6 +318,8 @@ class OffscreenTextureReader : AutoCloseable {
     }
 
     private companion object {
+        const val TAG = "Domofon"
+
         /**
          * Fit inside [maxEdge] keeping the aspect ratio, never scaling *up*, and always
          * landing on even dimensions — odd sizes trip row-alignment assumptions in some

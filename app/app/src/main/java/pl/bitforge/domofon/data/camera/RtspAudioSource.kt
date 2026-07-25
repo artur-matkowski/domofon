@@ -13,6 +13,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import pl.bitforge.domofon.domain.camera.AudioStatus
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Gate audio from a stream of its own, for the HTTP camera path.
@@ -44,13 +46,17 @@ class RtspAudioSource(
     private val onStatus: (AudioStatus) -> Unit,
 ) : AutoCloseable {
 
-    private var thread: HandlerThread? = null
-    private var handler: Handler? = null
-    private var player: ExoPlayer? = null
-    private var started = false
+    // Volatile for the same reason as [RtspFrameSource]'s: written by the caller's thread,
+    // read by the player thread, with no happens-before edge between the two.
+    @Volatile private var thread: HandlerThread? = null
+    @Volatile private var handler: Handler? = null
+    @Volatile private var player: ExoPlayer? = null
+    @Volatile private var started = false
+
+    /** Player-thread only. */
     private var playing = false
 
-    private val retryRunnable = Runnable { startAttempt() }
+    private val retryRunnable = Runnable { handler?.let { startAttempt(it) } }
 
     private val watchdogRunnable = Runnable {
         // A restreamer that accepts the RTSP session but sends no audio looks exactly like
@@ -67,35 +73,49 @@ class RtspAudioSource(
         if (thread != null) return
         val t = HandlerThread("camera-audio").also { it.start() }
         thread = t
-        handler = Handler(t.looper).also { h ->
-            h.post {
-                started = true
-                startAttempt()
-            }
+        // Publish the handler before posting anything that reads it — see [RtspFrameSource].
+        val h = Handler(t.looper)
+        handler = h
+        h.post {
+            started = true
+            startAttempt(h)
         }
     }
 
-    /** Idempotent. Posts the teardown onto the player thread, which then quits itself. */
-    @Synchronized
+    /**
+     * Idempotent, and blocks until the session is really gone — same contract and same
+     * reason as [RtspFrameSource.close]. A restreamer is more forgiving about a second
+     * session than the camera is, but the composition above closes both halves in one act
+     * and the ordering has to mean something on both.
+     */
     override fun close() {
-        val t = thread ?: return
-        val h = handler ?: return
-        thread = null
-        handler = null
+        val t: HandlerThread
+        val h: Handler
+        synchronized(this) {
+            t = thread ?: return
+            h = handler ?: return
+            thread = null
+            handler = null
+        }
+        val released = CountDownLatch(1)
         h.post {
             started = false
             h.removeCallbacks(retryRunnable)
             h.removeCallbacks(watchdogRunnable)
             releaseAttempt()
-            onStatus(AudioStatus.NONE)
+            // No status on the way out; the grabber owns what the panel says once a source
+            // has been retired. See [RtspFrameSource.close].
             t.quitSafely()
+            released.countDown()
+        }
+        if (!released.await(CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "camera: the audio thread did not release within ${CLOSE_TIMEOUT_MS}ms")
         }
     }
 
     // --- player-thread internals --------------------------------------------------------
 
-    private fun startAttempt() {
-        val h = handler ?: return
+    private fun startAttempt(h: Handler) {
         if (!started || player != null) return
         onStatus(AudioStatus.CONNECTING)
         playing = false
@@ -169,5 +189,8 @@ class RtspAudioSource(
 
         /** Backoff between reconnect attempts, matching the picture path's. */
         const val RETRY_MS = 30_000L
+
+        /** How long [close] waits for the player thread. Matches the picture path's. */
+        const val CLOSE_TIMEOUT_MS = 2_000L
     }
 }

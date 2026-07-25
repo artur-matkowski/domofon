@@ -54,13 +54,20 @@ class HttpFrameSource(
         started.launch { poll() }
     }
 
-    /** Idempotent. Cancels the poll loop and any in-flight fetch. */
+    /**
+     * Idempotent. Cancels the poll loop and any in-flight fetch.
+     *
+     * Unlike the RTSP sources this does not wait: there is no session to hand over, and an
+     * in-flight fetch can sit on a read timeout for seconds. A poll iteration that is
+     * already past the cancellation point may still call back — the grabber retires the
+     * sink before closing, so nothing it says is heard. No status on the way out, for the
+     * same reason.
+     */
     @Synchronized
     override fun close() {
         val running = scope ?: return
         scope = null
         running.cancel()
-        onStatus(CameraFrameGrabber.Status.IDLE)
     }
 
     private suspend fun poll() {

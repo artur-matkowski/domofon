@@ -65,8 +65,9 @@ Everything constructed *by* the container gets dependencies via constructor inst
 | EGL context (`OffscreenTextureReader`) | `RtspFrameSource.close()` (player first) |
 | Camera session (whichever source) | `CameraFrameGrabber.stop()`, or `swap()` on a config change |
 | The HTTP path's two halves | `HttpCameraSource.close()` — audio then image, reverse of acquisition |
-| Separate audio player + its looper | `RtspAudioSource.close()` (posts teardown, then `quitSafely`) |
+| Separate audio player + its looper | `RtspAudioSource.close()` (posts teardown, waits for it, `quitSafely`) |
 | The grabber's config-watch scope | `CameraFrameGrabber.stop()`; a stale `swap()` is refused by scope identity |
+| The grabber's session queue | nothing — it shares appScope's job on purpose, so a teardown is never abandoned half-way by the surface that started it |
 | Distance-poll scope | `HomeDistanceTracker.stop()`; parented to appScope as backstop |
 | QML listeners | `QmlGateBinder.close()` ← `MainActivity.onDestroy` |
 | Receiver work | bounded `withTimeoutOrNull` on appScope; `PendingResult.finish()` in `finally` |
