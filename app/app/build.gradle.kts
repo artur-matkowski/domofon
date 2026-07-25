@@ -113,6 +113,12 @@ android {
             excludes += "META-INF/native/**"
         }
     }
+
+    testOptions {
+        // Test code may compile against classes that mention android.util.Log; a stubbed
+        // Log returning defaults beats pulling Robolectric in for pure-JVM domain tests.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 // Qt Gradle Plugin 1.4 wires its AAR-generation task (QtBuildTask) into the *debug* compile
@@ -169,4 +175,10 @@ dependencies {
     // media3 minor may not build here until compileSdk moves; same trap as core-ktx 1.19.0.
     implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("androidx.media3:media3-exoplayer-rtsp:1.10.1")
+
+    // JVM unit tests only — no instrumented tests, no mocking framework. Manual DI keeps
+    // fakes cheap, and a bytecode agent is one more thing the fragile Qt/AGP build could
+    // trip over.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
