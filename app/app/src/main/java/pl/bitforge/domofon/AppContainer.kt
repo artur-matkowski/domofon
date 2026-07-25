@@ -63,7 +63,7 @@ class AppContainer(app: Application) : AutoCloseable {
 
     /** A per-surface distance readout; same ownership rule as the grabber. */
     fun newHomeDistanceTracker(context: Context) =
-        HomeDistanceTracker(context.applicationContext, configStore, geofenceManager)
+        HomeDistanceTracker(context.applicationContext, configStore, geofenceManager, appScope)
 
     /** One ViewModel per surface, on that surface's lifecycle scope. */
     fun newGateViewModel(

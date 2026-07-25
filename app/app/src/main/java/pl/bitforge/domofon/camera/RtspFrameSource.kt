@@ -57,7 +57,7 @@ class RtspFrameSource(
     private val configStore: ConfigStore,
     private val onFrame: (Bitmap) -> Unit,
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
-) {
+) : AutoCloseable {
 
     private var thread: HandlerThread? = null
     private var handler: Handler? = null
@@ -94,8 +94,9 @@ class RtspFrameSource(
         }
     }
 
+    /** Idempotent. Posts the teardown onto the player thread, which then quits itself. */
     @Synchronized
-    fun stop() {
+    override fun close() {
         val t = thread ?: return
         val h = handler ?: return
         thread = null
@@ -241,7 +242,7 @@ class RtspFrameSource(
         // Player first: it must stop writing into the surface before the surface goes away.
         player?.release()
         player = null
-        reader?.release()
+        reader?.close()
         reader = null
     }
 

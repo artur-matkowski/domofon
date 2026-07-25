@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import pl.bitforge.domofon.config.ConfigStore
@@ -52,6 +53,8 @@ class HomeDistanceTracker(
     private val context: Context,
     private val configStore: ConfigStore,
     private val geofence: GeofenceManager,
+    /** Parent of every polling scope this creates — container shutdown stops them all. */
+    private val appScope: CoroutineScope,
 ) {
 
     /** Metres from the home geofence centre. A null [distance] value means "unavailable". */
@@ -85,8 +88,12 @@ class HomeDistanceTracker(
         }
         // Main.immediate: every step is either a suspending Play-services call or a delay, so
         // there is no CPU work to keep off the UI thread, and staying on Main keeps the
-        // StateFlow writes ordered with the collectors that read them.
-        val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        // StateFlow writes ordered with the collectors that read them. The job parents to
+        // the app scope, so a container close cancels a loop its owner forgot to stop.
+        val s = CoroutineScope(
+            appScope.coroutineContext + SupervisorJob(appScope.coroutineContext.job) +
+                Dispatchers.Main.immediate
+        )
         scope = s
         s.launch { loop() }
     }

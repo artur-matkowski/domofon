@@ -38,7 +38,7 @@ class HttpFrameSource(
     private val configStore: ConfigStore,
     private val onFrame: (Bitmap) -> Unit,
     private val onStatus: (CameraFrameGrabber.Status) -> Unit,
-) {
+) : AutoCloseable {
 
     private var scope: CoroutineScope? = null
 
@@ -51,8 +51,9 @@ class HttpFrameSource(
         started.launch { poll() }
     }
 
+    /** Idempotent. Cancels the poll loop and any in-flight fetch. */
     @Synchronized
-    fun stop() {
+    override fun close() {
         val running = scope ?: return
         scope = null
         running.cancel()

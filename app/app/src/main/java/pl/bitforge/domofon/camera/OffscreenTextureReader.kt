@@ -39,7 +39,10 @@ import java.nio.FloatBuffer
  * `HandlerThread`. Nothing here is synchronised, deliberately: the confinement is the
  * design, and locks would only hide a violation of it.
  */
-class OffscreenTextureReader {
+class OffscreenTextureReader : AutoCloseable {
+
+    /** RAII alias for [release] — the owner ([RtspFrameSource]) closes this from its own close. */
+    override fun close() = release()
 
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT

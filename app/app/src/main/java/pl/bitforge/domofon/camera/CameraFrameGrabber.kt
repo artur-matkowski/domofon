@@ -56,32 +56,36 @@ class CameraFrameGrabber(
     private val _status = MutableStateFlow(Status.IDLE)
     val status: StateFlow<Status> = _status.asStateFlow()
 
-    private var rtsp: RtspFrameSource? = null
-    private var http: HttpFrameSource? = null
+    /**
+     * The active source, whichever kind it is — one owned resource, one close path. Which
+     * concrete source backs it is decided per [start] from the configuration.
+     */
+    private var session: AutoCloseable? = null
 
     /** Begin producing frames. No-op when no camera is configured. Safe to call repeatedly. */
     @Synchronized
     fun start() {
-        if (rtsp != null || http != null) return
+        if (session != null) return
         val camera = configStore.current.camera
-        when {
+        session = when {
             // The override wins when it is set: someone who filled in a snapshot URL has a
             // reason, and silently preferring the stream would make that field look broken.
             camera.hasSnapshot ->
-                http = HttpFrameSource(configStore, ::emit, ::emitStatus).also { it.start() }
+                HttpFrameSource(configStore, ::emit, ::emitStatus).also { it.start() }
             camera.hasStream ->
-                rtsp = RtspFrameSource(context, configStore, ::emit, ::emitStatus).also { it.start() }
-            else -> _status.value = Status.IDLE
+                RtspFrameSource(context, configStore, ::emit, ::emitStatus).also { it.start() }
+            else -> {
+                _status.value = Status.IDLE
+                null
+            }
         }
     }
 
     /** Stop producing. The last frame is kept, so redisplay on return is instant. */
     @Synchronized
     fun stop() {
-        rtsp?.stop()
-        rtsp = null
-        http?.stop()
-        http = null
+        session?.close()
+        session = null
     }
 
     private fun emit(bitmap: Bitmap) {
