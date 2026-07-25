@@ -15,7 +15,6 @@ vocabulary and are not.
 |---|---|---|---|
 | `hc12/rx/<Signal>` | radio → app | **yes** | `{"idSender":4,"idTarget":255,"ts":"…Z"}` |
 | `hc12/tx/<Signal>` | app → radio | **must NOT be** | `{"idTarget":4}` |
-| `hc12/error` | service → all | no | `{"topic":"…","reason":"…","ts":"…"}` |
 | `hc12/available` | service LWT | yes | `online` / `offline` |
 
 ## Signals
@@ -41,19 +40,16 @@ under a configurable key (default `{"idTarget": 4}`).
     11:40:10 before `GateOpening` 11:40:05). `GateStateReducer` applies newest-`ts`-wins;
    a live message wins timestamp ties, and may never move state backwards. Future stamps
    beyond 300 s are disbelieved without poisoning the memory.
-4. **`hc12/error` is a shared diagnostic channel** — every publisher's rejections land on
-   it. The `topic` field attributes them; the app surfaces only rejections of its own tx
-   prefix.
-5. **A live (non-retained) signal is proof the service is alive**, even if `hc12/available`
+4. **A live (non-retained) signal is proof the service is alive**, even if `hc12/available`
    never spoke on this connection (the birth message may not be retained broker-side).
    Retained messages prove nothing — brokers replay them for years.
-6. **Availability is three-valued** (`UNKNOWN`/`ONLINE`/`OFFLINE`), never a boolean: a
+5. **Availability is three-valued** (`UNKNOWN`/`ONLINE`/`OFFLINE`), never a boolean: a
    boolean defaulted to "offline" and presented the default as a fact on every fresh VPN
    session.
 
 ## Where the contract lives in code
 
-- `domain/GateProtocol.kt` — topic building, decode/encode, error attribution
+- `domain/GateProtocol.kt` — topic building, decode/encode
 - `domain/GateStateReducer.kt` — the staleness rules
 - `data/mqtt/GateService.kt` — connection lifecycle ([modules/gate.md](../modules/gate.md))
 - `domain/config/DomofonConfig.kt` — the configurable prefixes and their defaults

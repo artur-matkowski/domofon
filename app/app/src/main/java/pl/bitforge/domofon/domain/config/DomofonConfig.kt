@@ -73,13 +73,6 @@ data class DomofonConfig(
         val rxPrefix: String,
         val txPrefix: String,
         val availability: String,
-        /**
-         * Where the bridge explains a command it refused. It fails closed and publishes the
-         * reason ("idTarget out of range 0..255", "unknown message name '…'"), and until the
-         * app subscribed to this, a rejected command was indistinguishable on screen from a
-         * delivered one — the broker acks the publish either way.
-         */
-        val error: String,
         /** The gate controller's node id on the radio; goes in the command payload. */
         val nodeId: Int,
         /** JSON key carrying [nodeId] in a command payload. */
@@ -218,7 +211,6 @@ data class DomofonConfig(
                 rxPrefix = Defaults.RX_PREFIX,
                 txPrefix = Defaults.TX_PREFIX,
                 availability = Defaults.AVAILABILITY,
-                error = Defaults.ERROR,
                 nodeId = Defaults.NODE_ID,
                 payloadKey = Defaults.PAYLOAD_KEY,
             ),
@@ -251,7 +243,6 @@ data class DomofonConfig(
         const val RX_PREFIX = "hc12/rx/"
         const val TX_PREFIX = "hc12/tx/"
         const val AVAILABILITY = "hc12/available"
-        const val ERROR = "hc12/error"
         const val NODE_ID = 4
         const val PAYLOAD_KEY = "idTarget"
 

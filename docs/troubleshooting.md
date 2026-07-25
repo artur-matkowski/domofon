@@ -279,19 +279,6 @@ append-only history — entries are never rewritten to match later refactors.
   enforces the invariant *somebody holds the connection ⇒ a client exists*, acting only when
   there is no client at all so it can never race the reconnect backoff.
 
-- **Symptom**: a command is published, the broker acks it, and the gate does not move — with
-  nothing on screen to say why.
-  **Cause**: `hc12-web-service` fails closed and explains itself on `hc12/error`
-  (`{"topic":"hc12/tx/OpenGate","reason":"idTarget out of range 0..255","ts":…}`), but the
-  app never subscribed to it. A refused command and a delivered one were the same screen,
-  because the broker acks the publish either way — it has no idea the bridge threw it away.
-  **Fix (app, 2026-07-24)**: the error topic is a configurable setting (*Error topic*,
-  default `hc12/error`), subscribed alongside availability. Rejections whose `topic` field
-  starts with our own command prefix surface as a red line on the phone and in the car
-  screen's title, expiring after 20 s so they can never be read as the result of a later
-  command. Rejections belonging to other publishers on that shared channel are ignored.
-  The same line now also reports a command that never left the phone at all.
-
 - **Symptom**: everything is configured, the broker shows the app connected, and still no
   state and no actuation — with no error anywhere.
   **Cause**: a topic prefix typed without its trailing slash. `GateRepository` concatenates

@@ -20,7 +20,6 @@ URL; stills are pulled out of the stream on the GPU.
 ```
 hc12/rx/<Signal>   radio → app   retained   {"idSender":4,"idTarget":255,"ts":"…"}
 hc12/tx/<Signal>   app → radio   NEVER retained   {"idTarget":4}
-hc12/error         rejections               {"topic":"…","reason":"…"}
 hc12/available     service LWT   retained   "online" / "offline"
 ```
 

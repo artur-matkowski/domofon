@@ -30,14 +30,6 @@ sealed interface GateEvent {
         val retained: Boolean,
     ) : GateEvent
 
-    /**
-     * The bridge refused one of *our* commands. The error topic is a shared diagnostic
-     * channel — every publisher's rejections land on it — so [GateProtocol.decode] has
-     * already attributed this one to our tx prefix; foreign rejections come back as
-     * [Ignored]. [reason] is ready to show, never empty.
-     */
-    data class BridgeError(val reason: String) : GateEvent
-
     /** Not actionable: a foreign topic, junk JSON, a bad timestamp. [why] is for the log. */
     data class Ignored(val why: String) : GateEvent
 }
@@ -52,11 +44,10 @@ sealed interface GateEvent {
  */
 class GateProtocol(private val topics: DomofonConfig.Topics) {
 
-    /** Everything one connection subscribes to: each rx signal, availability, and errors. */
+    /** Everything one connection subscribes to: each rx signal, plus availability. */
     fun subscriptions(mqtt: DomofonConfig.Mqtt): List<Subscription> =
         SIGNAL_TO_STATE.keys.map { Subscription(topics.rxPrefix + it, mqtt.qosState) } +
-            Subscription(topics.availability, mqtt.qosAvailability) +
-            Subscription(topics.error, mqtt.qosAvailability)
+            Subscription(topics.availability, mqtt.qosAvailability)
 
     /** Classifies one inbound message. Never throws; unparseable input becomes [GateEvent.Ignored]. */
     fun decode(topic: String, payload: String, retained: Boolean): GateEvent {
@@ -70,8 +61,6 @@ class GateProtocol(private val topics: DomofonConfig.Topics) {
                 }
             )
         }
-
-        if (topic == topics.error) return decodeError(payload)
 
         val state = SIGNAL_TO_STATE[topic.removePrefix(topics.rxPrefix)]
             ?: return GateEvent.Ignored("unknown signal topic: $topic")
@@ -103,20 +92,6 @@ class GateProtocol(private val topics: DomofonConfig.Topics) {
     }
 
     data class Command(val topic: String, val payload: String)
-
-    private fun decodeError(payload: String): GateEvent {
-        val json = try {
-            JSONObject(payload)
-        } catch (e: JSONException) {
-            return GateEvent.Ignored("error payload is not JSON")
-        }
-        val rejected = json.optString("topic")
-        if (!rejected.startsWith(topics.txPrefix)) {
-            return GateEvent.Ignored("error for $rejected — not one of ours")
-        }
-        val reason = json.optString("reason").ifEmpty { "the gate service refused the command" }
-        return GateEvent.BridgeError(reason)
-    }
 
     private fun parseTs(raw: String): Instant? {
         if (raw.isEmpty()) return null

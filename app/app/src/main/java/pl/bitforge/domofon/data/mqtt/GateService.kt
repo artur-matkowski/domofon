@@ -363,9 +363,6 @@ class GateService(
                 Log.i(TAG, "state -> ${next.state} (retained=${event.retained})")
             }
 
-            is GateEvent.BridgeError ->
-                reportError("Gate service refused the command: ${event.reason}")
-
             is GateEvent.Ignored -> Log.w(TAG, "rx ignored: ${event.why}")
         }
     }

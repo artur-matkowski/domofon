@@ -13,7 +13,6 @@ class GateProtocolTest {
         rxPrefix = "hc12/rx/",
         txPrefix = "hc12/tx/",
         availability = "hc12/available",
-        error = "hc12/error",
         nodeId = 4,
         payloadKey = "idTarget",
     )
@@ -28,14 +27,13 @@ class GateProtocolTest {
     // --- subscriptions ---------------------------------------------------------------
 
     @Test
-    fun `subscribes every signal plus availability and error with per-class qos`() {
+    fun `subscribes every signal plus availability with per-class qos`() {
         val subs = protocol.subscriptions(mqtt)
-        assertEquals(GateProtocol.SIGNAL_TO_STATE.size + 2, subs.size)
+        assertEquals(GateProtocol.SIGNAL_TO_STATE.size + 1, subs.size)
         GateProtocol.SIGNAL_TO_STATE.keys.forEach { signal ->
             assertTrue(subs.contains(Subscription("hc12/rx/$signal", 1)))
         }
         assertTrue(subs.contains(Subscription("hc12/available", 0)))
-        assertTrue(subs.contains(Subscription("hc12/error", 0)))
     }
 
     // --- availability ----------------------------------------------------------------
@@ -128,43 +126,6 @@ class GateProtocolTest {
     fun `missing or unparseable ts is ignored`() {
         assertTrue(protocol.decode("hc12/rx/GateOpened", """{"idSender":4}""", false) is GateEvent.Ignored)
         assertTrue(protocol.decode("hc12/rx/GateOpened", """{"ts":"yesterday"}""", false) is GateEvent.Ignored)
-    }
-
-    // --- error topic -----------------------------------------------------------------
-
-    @Test
-    fun `our rejection surfaces with its reason`() {
-        val event = protocol.decode(
-            "hc12/error",
-            """{"topic":"hc12/tx/OpenGate","reason":"idTarget out of range 0..255"}""",
-            retained = false,
-        )
-        assertEquals(GateEvent.BridgeError("idTarget out of range 0..255"), event)
-    }
-
-    @Test
-    fun `our rejection with no reason gets a default`() {
-        val event = protocol.decode(
-            "hc12/error",
-            """{"topic":"hc12/tx/OpenGate"}""",
-            retained = false,
-        ) as GateEvent.BridgeError
-        assertEquals("the gate service refused the command", event.reason)
-    }
-
-    @Test
-    fun `someone else's rejection on the shared error topic is ignored`() {
-        val event = protocol.decode(
-            "hc12/error",
-            """{"topic":"other-tool/tx/Whatever","reason":"nope"}""",
-            retained = false,
-        )
-        assertTrue(event is GateEvent.Ignored)
-    }
-
-    @Test
-    fun `non-json error payload is ignored`() {
-        assertTrue(protocol.decode("hc12/error", "boom", false) is GateEvent.Ignored)
     }
 
     // --- commands --------------------------------------------------------------------

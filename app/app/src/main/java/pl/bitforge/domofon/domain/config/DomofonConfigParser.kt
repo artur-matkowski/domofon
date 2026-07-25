@@ -17,7 +17,6 @@ object ConfigKeys {
     const val RX_PREFIX = "topics.rxPrefix"
     const val TX_PREFIX = "topics.txPrefix"
     const val AVAILABILITY = "topics.availability"
-    const val ERROR = "topics.error"
     const val NODE_ID = "topics.nodeId"
     const val PAYLOAD_KEY = "topics.payloadKey"
 
@@ -90,7 +89,6 @@ object DomofonConfigParser {
                 rxPrefix = prefix(prefs, ConfigKeys.RX_PREFIX, DomofonConfig.Defaults.RX_PREFIX),
                 txPrefix = prefix(prefs, ConfigKeys.TX_PREFIX, DomofonConfig.Defaults.TX_PREFIX),
                 availability = str(prefs, ConfigKeys.AVAILABILITY, DomofonConfig.Defaults.AVAILABILITY).trim(),
-                error = str(prefs, ConfigKeys.ERROR, DomofonConfig.Defaults.ERROR).trim(),
                 nodeId = int(prefs, ConfigKeys.NODE_ID, DomofonConfig.Defaults.NODE_ID),
                 payloadKey = str(prefs, ConfigKeys.PAYLOAD_KEY, DomofonConfig.Defaults.PAYLOAD_KEY),
             ),

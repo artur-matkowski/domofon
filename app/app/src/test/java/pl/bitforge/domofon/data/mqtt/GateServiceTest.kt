@@ -50,8 +50,8 @@ class GateServiceTest {
 
         transport.handles[0].connectComplete()
         assertEquals(ConnectionStatus.CONNECTED, service.connection.value.status)
-        // Seven signals + availability + error.
-        assertEquals(9, transport.handles[0].subscriptions.size)
+        // Seven signals + availability.
+        assertEquals(8, transport.handles[0].subscriptions.size)
     }
 
     @Test
@@ -251,40 +251,16 @@ class GateServiceTest {
     }
 
     @Test
-    fun `our bridge rejection surfaces and expires after its ttl`() = runTest {
-        val service = service()
-        service.acquire("phone-ui")
-        val h = transport.handles[0]
-        h.connectComplete()
-
-        h.deliver("hc12/error", """{"topic":"hc12/tx/OpenGate","reason":"out of range"}""")
-        assertEquals("Gate service refused the command: out of range", service.lastError.value)
-
-        advanceTimeBy(21_000)
-        assertEquals("", service.lastError.value)
-    }
-
-    @Test
-    fun `a foreign rejection on the shared error topic stays silent`() = runTest {
-        val service = service()
-        service.acquire("phone-ui")
-        val h = transport.handles[0]
-        h.connectComplete()
-
-        h.deliver("hc12/error", """{"topic":"other/tx/Thing","reason":"nope"}""")
-        assertEquals("", service.lastError.value)
-    }
-
-    @Test
     fun `teardown resets state but keeps the last error for the ui to render`() = runTest {
         val service = service()
         val lease = service.acquire("phone-ui")
         val h = transport.handles[0]
+        h.ackPublishes = false
         h.connectComplete()
-        h.deliver("hc12/error", """{"topic":"hc12/tx/OpenGate","reason":"refused"}""")
+        assertFalse(service.sendCommandAwait("open"))
 
         lease.close()
-        assertEquals("Gate service refused the command: refused", service.lastError.value)
+        assertEquals("Command not sent — the broker did not accept it", service.lastError.value)
     }
 
     @Test
@@ -321,13 +297,18 @@ class GateServiceTest {
     }
 
     @Test
-    fun `sendCommandAwait that never connects reports it within its budget`() = runTest {
+    fun `sendCommandAwait that never connects reports it, and the report expires`() = runTest {
         val service = service()
         val result = async { service.sendCommandAwait("open") }
         advanceTimeBy(8_100)
 
         assertFalse(result.await())
         assertEquals("Command not sent — no connection to the broker", service.lastError.value)
+
+        // An error is about the command just attempted: it must not outlive its ttl and be
+        // read as the verdict on the next one.
+        advanceTimeBy(21_000)
+        assertEquals("", service.lastError.value)
     }
 
     @Test

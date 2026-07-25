@@ -33,8 +33,8 @@ Rectangle {
     // dead audio track is a dead session and cameraStatus already says so. Empty hides it.
     property string audioNotice: ""
 
-    // Kotlin -> QML. Why the last command did not reach the gate — either the bridge refused
-    // it (hc12/error) or it never left the phone. Empty when there is nothing to report; it
+    // Kotlin -> QML. Why the last command never left the phone — no connection to the broker,
+    // or a publish the broker would not take. Empty when there is nothing to report; it
     // clears itself after ~20 s so it can never be read as the state of a later command.
     property string lastError: ""
 

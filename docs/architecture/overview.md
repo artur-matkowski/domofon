@@ -11,7 +11,7 @@ included a Python `bridge/` and QtMultimedia video; neither shipped — see the 
 | Component | Where | Role |
 |---|---|---|
 | Gate controller | AVR node on a 433 MHz HC-12 radio | Physically moves the gate |
-| **hc12-web-service** | `rpi-d`, separate repo (C++/Poco) | Bridges the radio to MQTT — publishes gate signals, executes commands, rejects bad ones on a shared error topic |
+| **hc12-web-service** | `rpi-d`, separate repo (C++/Poco) | Bridges the radio to MQTT — publishes gate signals and executes commands |
 | MQTT broker | Home network | The only protocol the app speaks (see [mqtt-contract.md](mqtt-contract.md)) |
 | RTSP camera | At the gate | One RTSP URL carrying video + audio; the app pulls stills out of the stream |
 | OpenVPN server + OpenVPN for Android | Home ↔ phone | Always-on, per-app tunnel; every byte to home rides it |
@@ -25,7 +25,7 @@ HOME NETWORK                                   PHONE (over OpenVPN for Android)
 │ hc12-web-service (rpi-d)        │            │  ├ ConfigStore (all settings)         │ │
 │   pub hc12/rx/<Signal> retained │            │  ├ CameraFrameGrabber (per surface)   │ │
 │   sub hc12/tx/<Signal>          │◀──MQTT────▶│  └ GeofenceManager / DistanceTracker  │ │
-│   pub hc12/error, hc12/available│            │ Surfaces (each via GateViewModel):    │ │
+│   pub hc12/available            │            │ Surfaces (each via GateViewModel):    │ │
 │                                 │            │  ├ phone: QtQuickView + QML (binder)  │ │
 │ RTSP camera ────────────────────┼──RTSP─────▶│  ├ car: CarAppService templates       │ │
 └─────────────────────────────────┘            │  └ notifications (CarAppExtender HUN) │ │
