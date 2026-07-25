@@ -24,7 +24,7 @@ import pl.bitforge.domofon.domain.GateState
  * cannot be forced to open an app, but a high-importance notification carrying this
  * extender is drawn over whatever the car screen is showing, Google Maps included. The
  * action button on it is as close to "one tap from Maps" as the platform allows — see
- * docs/07.
+ * docs/modules/ui-notifications.md.
  */
 class GateNotifier {
 

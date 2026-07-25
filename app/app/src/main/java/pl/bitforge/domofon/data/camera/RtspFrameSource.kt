@@ -22,12 +22,12 @@ import pl.bitforge.domofon.data.config.ConfigStore
  *
  * **One session carries both.** Audio was first tried as a second, separately-owned player;
  * this camera refuses the second RTSP connection — the stills stream IO-errors every cycle
- * while the audio one plays (verified on device 2026-07-24, docs/10). So the audio rides this
+ * while the audio one plays (verified on device 2026-07-24, docs/troubleshooting.md). So the audio rides this
  * same player: video decodes to the GL surface, audio to the speaker, over a single
  * connection — which is also the least this pulls over the VPN. It is gated by the
  * `camera.audioEnabled` setting and, being Kotlin, plays on the phone and in a car session
  * alike. Playing audio does not touch the CPU-frame path the `nativeCreatePlanes` abort was
- * about (docs/04 §2), so it is safe here.
+ * about (docs/modules/camera.md), so it is safe here.
  *
  * This is a deliberate return to the source the app started with, after an HTTP snapshot
  * detour. The detour worked, but it made the app *deployment-shaped*: the gate camera here
@@ -38,7 +38,7 @@ import pl.bitforge.domofon.data.config.ConfigStore
  * authenticates itself.
  *
  * The pixels come back through [OffscreenTextureReader] rather than an `ImageReader`, which
- * is the entire reason this is safe now — see that class, and docs/10 → `nativeCreatePlanes`.
+ * is the entire reason this is safe now — see that class, and docs/troubleshooting.md → `nativeCreatePlanes`.
  *
  * **The stream stays open while this is started.** Reconnecting per snapshot sounds tidier
  * but costs 1–3 s of RTSP handshake and keyframe wait over a VPN, every time; at a ten

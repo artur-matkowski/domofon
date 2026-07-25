@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // activity never happens; a bound car session (DomofonCarAppService) keeps the
         // process alive for the whole drive, which turns "swipe the app away and reopen it"
         // into exactly this. So hand the launch to a fresh process instead of loading Qt
-        // twice. See docs/10-troubleshooting.md, Android Auto section.
+        // twice. See docs/troubleshooting.md, Android Auto section.
         if (qtHostedInThisProcess) {
             Log.w(TAG, "Qt already hosted in this process — restarting into a fresh one")
             hostingQt = false
@@ -177,7 +177,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // reports READY. Launching Settings here would race the QML load: if Settings
         // covers this activity before the load completes, QtQuickView stalls mid-load and
         // never recovers, and backing out of Settings lands on a dead screen (see
-        // docs/10-troubleshooting.md, blank-screen entry).
+        // docs/troubleshooting.md, blank-screen entry).
         firstRun = savedInstanceState == null
     }
 

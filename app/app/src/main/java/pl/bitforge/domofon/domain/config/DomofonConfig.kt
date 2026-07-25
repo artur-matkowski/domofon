@@ -228,7 +228,7 @@ data class DomofonConfig(
         /** Gate audio plays by default: hearing the gate is the point of an entry phone. */
         const val AUDIO_ENABLED = true
 
-        /** 2 km — well above docs/08's ~150 m reliability floor; fires ~2 min out at 60 km/h. */
+        /** 2 km — well above the geofence design's ~150 m reliability floor (docs/modules/geo.md); fires ~2 min out at 60 km/h. */
         const val RADIUS_M = 2_000f
     }
 }

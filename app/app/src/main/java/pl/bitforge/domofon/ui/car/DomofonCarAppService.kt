@@ -85,7 +85,7 @@ class CarGateSession : Session() {
             }
         )
 
-        // An active Android Auto session is one of the three MQTT holders (ch. 06).
+        // An active Android Auto session is one of the three MQTT holders (docs/architecture/decisions.md D5).
         lease = carContext.container.gateService.acquire("car-session")
 
         val viewModel = carContext.container.newGateViewModel(lifecycleScope, grabber, distanceTracker)

@@ -1,8 +1,19 @@
-# 10 — Troubleshooting (living document)
+# Troubleshooting (living document)
 
-Seeded with the known traps per area. **When a guidance session solves a new problem,
-append it here** in the same format: *Symptom → Cause → Fix*. Newest entries at the top
-of each section.
+*[Wiki home](README.md) › troubleshooting*
+
+**When a session solves a new problem, append it here** in the same format:
+*Symptom → Cause → Fix*. Newest entries at the top of each section. This log is
+append-only history — entries are never rewritten to match later refactors.
+
+> **Reading old entries:** references like "ch. 04" or "docs/11" point at the original
+> chapter-numbered design record, which was restructured into this wiki on 2026-07-25
+> (chapters 00–09/11 → [architecture/](architecture/overview.md), [modules/](modules/gate.md),
+> [build-and-release.md](build-and-release.md); this file was chapter 10). Class names in
+> older entries may predate the refactor: `GateRepository` → `GateService` + friends
+> ([modules/gate.md](modules/gate.md)), `MainActivity.writeFrame` → `FrameFileStore`,
+> `ArrivalPopUp` → `ArrivalFlow`, packages `gate/ geo/ camera/ config/ car/` →
+> `domain/ data/ ui/ receivers/`. The symptoms and causes remain exactly as valid.
 
 ## Qt for Android / build
 

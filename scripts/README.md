@@ -31,13 +31,13 @@ build scripts now source `lib/memguard.sh`, which:
   daemon would otherwise squat for Gradle's three-hour idle timeout.
 
 Overrides: `DOMOFON_SKIP_MEM_CHECK=1`, `DOMOFON_MEM_REQUIRED=<MB>`, `DOMOFON_MEM_MAX=<size>`,
-`DOMOFON_MEM_HIGH`, `DOMOFON_MEM_SWAP`, `DOMOFON_NO_CAP=1`. Full write-up: `docs/10` →
+`DOMOFON_MEM_HIGH`, `DOMOFON_MEM_SWAP`, `DOMOFON_NO_CAP=1`. Full write-up: `docs/troubleshooting.md` →
 *Build machine / host resources*.
 
 ## Versioning
 
 Version is derived from git, never hand-edited (see `app/app/build.gradle.kts` and
-`docs/11 §4`):
+`docs/build-and-release.md`):
 
 - **versionCode** = commit count (`git rev-list --count HEAD`) — monotonic, which is what
   Play requires of every upload.
@@ -51,6 +51,6 @@ Version is derived from git, never hand-edited (see `app/app/build.gradle.kts` a
 key (`app/keystore.properties` + the upload `.jks`) and the local
 `scripts/secret-sentinels.txt` (copy from the `.example`). The coding agent never runs it:
 it builds as a different user and must not touch the signing secrets — it builds **debug**
-only, in a scratchpad copy of the repo (see `docs/10` and the project memory). Always test
+only, in a scratchpad copy of the repo (see `docs/build-and-release.md` and the project memory). Always test
 the release APK on the phone before uploading the bundle — R8 resolves classes reflectively,
 so a working debug build proves nothing.

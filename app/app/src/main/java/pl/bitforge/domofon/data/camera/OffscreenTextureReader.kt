@@ -23,7 +23,7 @@ import java.nio.FloatBuffer
  * MediaCodec decides to hand back a buffer that lives only on the GPU. Not an exception: a
  * SIGABRT out of `nativeCreatePlanes`, underneath any `try/catch`, and there is no way to
  * ask an `Image` whether reading it is safe beforehand. It killed the app on every launch
- * on the test phone. See docs/10 → `nativeCreatePlanes`.
+ * on the test phone. See docs/troubleshooting.md → `nativeCreatePlanes`.
  *
  * GPU-only buffers are entirely fine if you read them *with the GPU*. So: the decoder
  * renders into a [SurfaceTexture] backed by an external-OES texture, we draw that texture

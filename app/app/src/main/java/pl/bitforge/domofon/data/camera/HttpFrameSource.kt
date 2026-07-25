@@ -32,7 +32,7 @@ import kotlin.coroutines.coroutineContext
  * one. Snapshot endpoints are vendor-specific (`/ISAPI/…` on Hikvision, `/cgi-bin/…` on
  * Dahua, something else on the next brand) and frequently Digest-only, which
  * `HttpURLConnection` does not speak. An app that *required* one would only ever work for
- * people who know their camera's firmware — see docs/04 §1.
+ * people who know their camera's firmware — see docs/modules/camera.md.
  */
 class HttpFrameSource(
     private val configStore: ConfigStore,
@@ -126,7 +126,7 @@ class HttpFrameSource(
             // source and this one is the override.
             Log.w(TAG, "camera: the snapshot endpoint requires Digest auth, which this " +
                 "client does not speak — clear the snapshot URL and use RTSP, or put " +
-                "go2rtc in front (docs/04)")
+                "go2rtc in front (docs/modules/camera.md)")
         } else {
             Log.w(TAG, "camera: snapshot HTTP $code")
         }

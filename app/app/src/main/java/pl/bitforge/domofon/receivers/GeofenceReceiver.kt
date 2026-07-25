@@ -14,7 +14,7 @@ import pl.bitforge.domofon.data.location.GeofenceManager
 /**
  * Entering the home fence surfaces the gate on the car screen.
  *
- * No foreground service, unlike docs/08: the rx topics are retained, so the current state
+ * No foreground service, unlike the original geofence design: the rx topics are retained, so the current state
  * lands within a second or two of connecting and a long-lived connection buys nothing for
  * a one-shot pop-up. Play also stopped accepting "geofencing" as a foreground-service use
  * case in August 2026, so that upgrade path is closed regardless.

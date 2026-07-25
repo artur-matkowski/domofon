@@ -30,7 +30,7 @@ import pl.bitforge.domofon.data.config.ConfigStore
  * What neither source may do is read decoded video frames on the CPU. That is not style —
  * `ImageReader` + `Image.getPlanes()` is a native abort on GPU-only decoder buffers, and it
  * killed this app on every launch on the test phone. See [OffscreenTextureReader] and
- * docs/10 → `nativeCreatePlanes`.
+ * docs/troubleshooting.md → `nativeCreatePlanes`.
  */
 class CameraFrameGrabber(
     private val context: Context,

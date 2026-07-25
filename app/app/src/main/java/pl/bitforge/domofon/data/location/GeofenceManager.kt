@@ -49,7 +49,7 @@ class GeofenceManager(private val configStore: ConfigStore) {
         }
         if (!hasPermissions(context)) {
             // Without "Allow all the time" the geofence is accepted and then never fires —
-            // docs/08 calls this the #1 geofence bug. Refuse loudly instead.
+            // the #1 geofence bug (docs/modules/geo.md). Refuse loudly instead.
             Log.w(TAG, "geofence NOT registered: background location not granted")
             return
         }
@@ -63,7 +63,7 @@ class GeofenceManager(private val configStore: ConfigStore) {
             .build()
 
         val request = GeofencingRequest.Builder()
-            // No INITIAL_TRIGGER_ENTER. docs/08 assumes a 300-500 m radius; at the default
+            // No INITIAL_TRIGGER_ENTER. the original design assumed a 300-500 m radius; at the default
             // 2 km the house sits inside the fence, so an initial trigger would fire
             // "approaching home" on every app start and every reboot while parked at home.
             .setInitialTrigger(0)
