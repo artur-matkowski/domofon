@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.gate
+package pl.bitforge.domofon.receivers
 
 import android.app.KeyguardManager
 import android.app.PendingIntent

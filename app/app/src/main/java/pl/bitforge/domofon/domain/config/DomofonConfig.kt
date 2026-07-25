@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.config
+package pl.bitforge.domofon.domain.config
 
 /**
  * Everything about *this* installation that used to be a `const val` or a `BuildConfig`
@@ -130,7 +130,7 @@ data class DomofonConfig(
      *
      * [rtspUrl] is the real setting: every camera speaks RTSP, the user owns that address
      * for their own player, and it carries its own auth. Stills are pulled out of it — see
-     * [pl.bitforge.domofon.camera.RtspFrameSource]. [snapshotUrl] overrides that with an
+     * [pl.bitforge.domofon.data.camera.RtspFrameSource]. [snapshotUrl] overrides that with an
      * HTTP JPEG endpoint for anyone who has a reason (go2rtc, Frigate, bandwidth), and is
      * deliberately *not* required: snapshot paths are vendor-specific and often Digest-only,
      * so an app that needed one would only work for people who know their camera's firmware.
@@ -141,14 +141,14 @@ data class DomofonConfig(
         /** The camera address. Carries the credentials inline: `rtsp://user:pass@host/…` */
         val rtspUrl: String,
         /**
-         * Seconds between snapshots the [pl.bitforge.domofon.camera.CameraFrameGrabber]
+         * Seconds between snapshots the [pl.bitforge.domofon.data.camera.CameraFrameGrabber]
          * fetches. Governs both the phone view's refresh and the car screen's redraw cadence.
          * Clamped in [ConfigStore.read].
          */
         val snapshotSecs: Int,
         /**
          * Play the RTSP stream's audio to the speaker while a camera view is open — see
-         * [pl.bitforge.domofon.camera.RtspAudioPlayer]. On by default; a switch, not a URL,
+         * [pl.bitforge.domofon.data.camera.RtspAudioPlayer]. On by default; a switch, not a URL,
          * so a user can silence the gate without unsetting [rtspUrl]. Only the RTSP source
          * carries audio, so this does nothing for a snapshot-only ([hasSnapshot]) config.
          */

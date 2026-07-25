@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.camera
+package pl.bitforge.domofon.data.camera
 
 import android.graphics.Bitmap
 import android.graphics.SurfaceTexture

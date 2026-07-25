@@ -12,7 +12,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.domain.BridgeStatus
 import pl.bitforge.domofon.domain.ConnectionStatus
 import pl.bitforge.domofon.domain.GatePolicy

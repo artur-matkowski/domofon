@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.gate
+package pl.bitforge.domofon.ui.notifications
 
 import android.annotation.SuppressLint
 import android.app.NotificationManager
@@ -12,6 +12,7 @@ import pl.bitforge.domofon.DomofonApp
 import pl.bitforge.domofon.MainActivity
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.domain.GatePolicy
+import pl.bitforge.domofon.receivers.GateCommandReceiver
 import pl.bitforge.domofon.domain.GateState
 
 /**

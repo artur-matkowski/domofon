@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.config
+package pl.bitforge.domofon.domain.config
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

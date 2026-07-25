@@ -1,6 +1,6 @@
 package pl.bitforge.domofon.ui.shared
 
-import pl.bitforge.domofon.camera.CameraFrameGrabber
+import pl.bitforge.domofon.data.camera.CameraFrameGrabber
 import pl.bitforge.domofon.domain.PrimaryAction
 
 /**

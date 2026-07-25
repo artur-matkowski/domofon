@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.geo
+package pl.bitforge.domofon.data.location
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -20,7 +20,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.config.ConfigStore
 import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -33,7 +33,7 @@ import kotlin.math.roundToInt
  * distance — only that we crossed the fence. This class asks, on a schedule, "where are we
  * now" and turns it into metres-from-home.
  *
- * Deliberately built like [pl.bitforge.domofon.camera.CameraFrameGrabber]: a plain object
+ * Deliberately built like [pl.bitforge.domofon.data.camera.CameraFrameGrabber]: a plain object
  * owned by whatever is on screen (the phone activity, the car session), started and stopped
  * with that owner's lifecycle. It holds nothing open in the background — the fix is pulled
  * only while a surface is foreground, so no foreground service and no permission beyond the
@@ -45,7 +45,7 @@ import kotlin.math.roundToInt
  * turned the geofence on has no new location behaviour at all — which is what keeps this
  * off Play's location-policy radar (see CLAUDE.md).
  *
- * Home coordinates live here, never in [pl.bitforge.domofon.gate.GateRepository]: the
+ * Home coordinates live here, never in the MQTT layer: the
  * config is sliced so the MQTT layer never sees the user's address. Same reason nothing in
  * here is logged but the distance itself.
  */

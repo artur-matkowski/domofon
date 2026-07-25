@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import java.time.Instant
 
 class GateProtocolTest {

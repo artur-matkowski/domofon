@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.domain.BridgeStatus
 import pl.bitforge.domofon.domain.ConnectionState
 import pl.bitforge.domofon.domain.ConnectionStatus

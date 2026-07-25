@@ -2,7 +2,7 @@ package pl.bitforge.domofon.domain
 
 import org.json.JSONException
 import org.json.JSONObject
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException

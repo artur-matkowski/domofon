@@ -1,7 +1,11 @@
-package pl.bitforge.domofon.config
+package pl.bitforge.domofon.data.config
 
 import android.content.Context
 import android.content.SharedPreferences
+import pl.bitforge.domofon.domain.config.ConfigKeys
+import pl.bitforge.domofon.domain.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfigParser
+import pl.bitforge.domofon.domain.config.RawPrefs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

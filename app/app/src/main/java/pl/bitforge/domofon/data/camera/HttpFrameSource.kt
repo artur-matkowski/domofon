@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.camera
+package pl.bitforge.domofon.data.camera
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -10,7 +10,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.config.ConfigStore
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection

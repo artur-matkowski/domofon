@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.geo
+package pl.bitforge.domofon.receivers
 
 import android.content.BroadcastReceiver
 import android.content.Context

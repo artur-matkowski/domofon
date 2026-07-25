@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.camera
+package pl.bitforge.domofon.data.camera
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -14,7 +14,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
-import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.config.ConfigStore
 
 /**
  * Stills — and, when the user wants it, audio — pulled straight out of the RTSP stream, the

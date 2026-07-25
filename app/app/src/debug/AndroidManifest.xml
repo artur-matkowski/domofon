@@ -3,7 +3,7 @@
   Debug-only overlay. It registers DebugGeofenceTrigger so that
 
       adb shell am broadcast -a pl.bitforge.domofon.DEBUG_GEOFENCE \
-        -n pl.bitforge.domofon/.geo.DebugGeofenceTrigger
+        -n pl.bitforge.domofon/.receivers.DebugGeofenceTrigger
 
   can exercise the arrival pop-up without driving 2 km out and back.
 
@@ -18,7 +18,7 @@
 
     <application>
         <receiver
-            android:name=".geo.DebugGeofenceTrigger"
+            android:name=".receivers.DebugGeofenceTrigger"
             android:exported="true">
             <intent-filter>
                 <action android:name="pl.bitforge.domofon.DEBUG_GEOFENCE"/>

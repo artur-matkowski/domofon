@@ -1,6 +1,6 @@
 package pl.bitforge.domofon.data.mqtt
 
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.domain.Subscription
 
 /**

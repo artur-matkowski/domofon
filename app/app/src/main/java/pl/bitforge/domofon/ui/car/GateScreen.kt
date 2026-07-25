@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.car
+package pl.bitforge.domofon.ui.car
 
 import androidx.annotation.DrawableRes
 import androidx.car.app.CarContext

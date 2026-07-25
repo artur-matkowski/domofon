@@ -6,15 +6,15 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
-import pl.bitforge.domofon.camera.CameraFrameGrabber
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.data.camera.CameraFrameGrabber
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.BridgeStatus
 import pl.bitforge.domofon.domain.ConnectionState
 import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.domain.GateState
 import pl.bitforge.domofon.domain.formatHomeDistance
-import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.data.location.HomeDistanceTracker
 
 /**
  * Derives [GateUiState] from the shared backend flows — the one place the seven source

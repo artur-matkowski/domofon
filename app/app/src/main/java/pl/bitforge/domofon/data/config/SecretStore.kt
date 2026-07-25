@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.config
+package pl.bitforge.domofon.data.config
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties

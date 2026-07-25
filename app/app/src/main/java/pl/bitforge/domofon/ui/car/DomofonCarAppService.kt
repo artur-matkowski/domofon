@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.car
+package pl.bitforge.domofon.ui.car
 
 import android.content.Intent
 import android.content.pm.ApplicationInfo

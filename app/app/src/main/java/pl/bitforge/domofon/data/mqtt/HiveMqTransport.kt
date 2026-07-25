@@ -6,7 +6,7 @@ import com.hivemq.client.mqtt.datatypes.MqttQos
 import com.hivemq.client.mqtt.lifecycle.MqttDisconnectSource
 import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient
 import kotlinx.coroutines.CompletableDeferred
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.domain.Subscription
 import java.util.concurrent.TimeUnit
 

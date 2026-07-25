@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.geo
+package pl.bitforge.domofon.receivers
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -9,6 +9,7 @@ import com.google.android.gms.location.GeofencingEvent
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import pl.bitforge.domofon.container
+import pl.bitforge.domofon.data.location.GeofenceManager
 
 /**
  * Entering the home fence surfaces the gate on the car screen.
@@ -51,7 +52,7 @@ class GeofenceReceiver : BroadcastReceiver() {
 
         Log.i(TAG, "geofence ENTER")
         val pending = goAsync()
-        ArrivalPopUp.run(app) { pending.finish() }
+        ArrivalFlow.run(app) { pending.finish() }
     }
 
     private companion object {
@@ -65,7 +66,7 @@ class GeofenceReceiver : BroadcastReceiver() {
  * `goAsync()` is only valid inside a live `onReceive`, so each receiver keeps its own
  * `PendingResult` and hands the teardown in as [finish].
  */
-internal object ArrivalPopUp {
+internal object ArrivalFlow {
 
     /** goAsync() allows roughly 10 s; leave headroom to post the notification. */
     private const val STATE_TIMEOUT_MS = 6_000L

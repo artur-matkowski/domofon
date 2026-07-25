@@ -6,15 +6,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import pl.bitforge.domofon.camera.CameraFrameGrabber
-import pl.bitforge.domofon.config.ConfigPreferenceDataStore
-import pl.bitforge.domofon.config.ConfigStore
-import pl.bitforge.domofon.config.SecretStore
+import pl.bitforge.domofon.data.camera.CameraFrameGrabber
+import pl.bitforge.domofon.data.config.ConfigPreferenceDataStore
+import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.data.config.SecretStore
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.data.mqtt.HiveMqTransport
-import pl.bitforge.domofon.gate.GateNotifier
-import pl.bitforge.domofon.geo.GeofenceManager
-import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.ui.notifications.GateNotifier
+import pl.bitforge.domofon.data.location.GeofenceManager
+import pl.bitforge.domofon.data.location.HomeDistanceTracker
 import pl.bitforge.domofon.ui.notifications.GateEventNotifier
 import pl.bitforge.domofon.ui.shared.GateViewModel
 

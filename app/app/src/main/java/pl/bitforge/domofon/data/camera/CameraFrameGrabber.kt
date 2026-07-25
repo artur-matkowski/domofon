@@ -1,11 +1,11 @@
-package pl.bitforge.domofon.camera
+package pl.bitforge.domofon.data.camera
 
 import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.config.ConfigStore
 
 /**
  * The camera picture, for every surface that wants one.
@@ -25,7 +25,7 @@ import pl.bitforge.domofon.config.ConfigStore
  *
  * Keeping the sources behind this one façade is what has made three rewrites of "where does
  * a frame come from" cost nothing above this line: [pl.bitforge.domofon.MainActivity] and
- * [pl.bitforge.domofon.car.GateScreen] have never had to change with it.
+ * [pl.bitforge.domofon.ui.car.GateScreen] have never had to change with it.
  *
  * What neither source may do is read decoded video frames on the CPU. That is not style —
  * `ImageReader` + `Image.getPlanes()` is a native abort on GPU-only decoder buffers, and it

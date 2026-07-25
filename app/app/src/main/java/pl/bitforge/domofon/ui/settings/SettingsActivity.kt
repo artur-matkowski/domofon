@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.config
+package pl.bitforge.domofon.ui.settings
 
 import android.Manifest
 import android.content.Intent
@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.container
+import pl.bitforge.domofon.domain.config.ConfigKeys
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.ConnectionState

@@ -22,7 +22,7 @@ import org.qtproject.qt.android.QtQmlStatus
 import org.qtproject.qt.android.QtQmlStatusChangeListener
 import org.qtproject.qt.android.QtQuickView
 import org.qtproject.qt.android.QtQuickViewContent
-import pl.bitforge.domofon.config.SettingsActivity
+import pl.bitforge.domofon.ui.settings.SettingsActivity
 import pl.bitforge.domofon.data.mqtt.ConnectionLease
 import pl.bitforge.domofon.ui.phone.FrameFileStore
 import pl.bitforge.domofon.ui.phone.PhoneTheme

@@ -74,7 +74,7 @@
             android:theme="@android:style/Theme.NoDisplay"/>
 
         <activity
-            android:name=".config.SettingsActivity"
+            android:name=".ui.settings.SettingsActivity"
             android:exported="false"
             android:label="@string/settings_title"
             android:parentActivityName=".MainActivity"
@@ -82,7 +82,7 @@
 
         <!-- IOT is the official category for "control your smart devices from the car". -->
         <service
-            android:name=".car.DomofonCarAppService"
+            android:name=".ui.car.DomofonCarAppService"
             android:exported="true">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService"/>
@@ -92,11 +92,11 @@
 
         <!-- All three are exported="false": every one of them can move the gate, and only
              the system (or our own notification) has any business triggering them. -->
-        <receiver android:name=".gate.GateCommandReceiver" android:exported="false"/>
+        <receiver android:name=".receivers.GateCommandReceiver" android:exported="false"/>
 
-        <receiver android:name=".geo.GeofenceReceiver" android:exported="false"/>
+        <receiver android:name=".receivers.GeofenceReceiver" android:exported="false"/>
 
-        <receiver android:name=".geo.BootReceiver" android:exported="false">
+        <receiver android:name=".receivers.BootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
             </intent-filter>

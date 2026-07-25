@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.geo
+package pl.bitforge.domofon.data.location
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -11,7 +11,8 @@ import androidx.core.content.ContextCompat
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
-import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.receivers.GeofenceReceiver
 
 /**
  * The home geofence. Entering it is what surfaces the gate on the car screen.

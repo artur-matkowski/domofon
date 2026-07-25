@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.geo
+package pl.bitforge.domofon.receivers
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -9,7 +9,7 @@ import android.util.Log
  * Debug-only: exercises the arrival pop-up without driving 2 km out and back.
  *
  *     adb shell am broadcast -a pl.bitforge.domofon.DEBUG_GEOFENCE \
- *       -n pl.bitforge.domofon/.geo.DebugGeofenceTrigger
+ *       -n pl.bitforge.domofon/.receivers.DebugGeofenceTrigger
  *
  * This class exists only in `src/debug`, so it is absent from the release APK entirely —
  * not merely disabled by a `BuildConfig.DEBUG` check in shipped code.
@@ -25,6 +25,6 @@ class DebugGeofenceTrigger : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Log.i("Domofon", "debug geofence trigger")
         val pending = goAsync()
-        ArrivalPopUp.run(context.applicationContext) { pending.finish() }
+        ArrivalFlow.run(context.applicationContext) { pending.finish() }
     }
 }

@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.data.mqtt.GateService
-import pl.bitforge.domofon.gate.GateNotifier
 
 /**
  * The single process-wide collector that turns gate-state changes into notifications.

@@ -9,11 +9,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import pl.bitforge.domofon.camera.CameraFrameGrabber
-import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.data.camera.CameraFrameGrabber
+import pl.bitforge.domofon.domain.config.DomofonConfig
 import pl.bitforge.domofon.data.mqtt.FakeTransport
 import pl.bitforge.domofon.data.mqtt.GateService
-import pl.bitforge.domofon.geo.HomeDistanceTracker
+import pl.bitforge.domofon.data.location.HomeDistanceTracker
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GateViewModelTest {

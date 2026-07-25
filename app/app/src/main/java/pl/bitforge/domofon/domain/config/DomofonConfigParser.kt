@@ -1,4 +1,4 @@
-package pl.bitforge.domofon.config
+package pl.bitforge.domofon.domain.config
 
 /**
  * Preference keys — the contract between [ConfigStore], the parser, and
