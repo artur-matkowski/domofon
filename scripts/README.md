@@ -7,14 +7,15 @@ their own directory, so they run the same in-tree or from a copy of the repo.
 |---|---|---|
 | `build-debug.sh [--install]` | Build a debug APK (git-derived version). `--install` also pushes it to a connected phone. | `dist/domofon-<version>-debug.apk` |
 | `build-release.sh [--dry-run] [--force] [--no-tag]` | Build a signed, upload-ready Play bundle: computes the next version from Conventional Commits, builds `.aab` + a testable release `.apk`, scans for leaked secrets, tags `v<version>`, prints the Play checklist. | `dist/domofon-<version>-release.{aab,apk}` |
+| `test.sh [--tests <pattern>]` | Run the JVM unit tests under the same memory guard as a build. | HTML report under `app/app/build/reports/` |
 | `dhu.sh` | Launch the Android Auto Desktop Head Unit against the connected phone. | — |
 | `find-snapshot-url.sh` | Probe a camera for a still-image (snapshot) URL. | — |
-| `lib/memguard.sh` | Sourced, not run. Memory pre-flight + cgroup cap for both build scripts. | — |
+| `lib/memguard.sh` | Sourced, not run. Memory pre-flight + cgroup cap, shared by `build-debug.sh`, `build-release.sh` and `test.sh`. | — |
 
 ## Builds cannot freeze the machine any more
 
-A release build locked this desktop solid on 2026-07-24 (nine minutes, hard reboot). Both
-build scripts now source `lib/memguard.sh`, which:
+A release build locked this desktop solid on 2026-07-24 (nine minutes, hard reboot). Every
+script that runs Gradle sources `lib/memguard.sh`, which:
 
 - **refuses to start** below ~10 GB free (release) or ~6 GB (debug), after first trying
   `./gradlew --stop`, and prints the biggest processes so the refusal tells you what to
