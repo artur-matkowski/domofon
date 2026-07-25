@@ -158,13 +158,14 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             ),
         )
 
-        mainQml.setStatusChangeListener(this)
-        qtQuickView.loadContent(mainQml)
-        qtHost.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
-
         // The binder is the single writer of the QML surface: it collects the ViewModel
         // while the scene is live and seeds it once on READY, through the same render()
         // path — this used to be six collectors plus a hand-maintained duplicate seed.
+        //
+        // Built *before* loadContent, along with the first-run flag below, because both are
+        // read from onStatusChanged: the load is asynchronous in practice, but a READY
+        // delivered synchronously from inside loadContent would otherwise find a null
+        // binder — no seed, no signal listeners, dead buttons — and silently do nothing.
         binder = QmlGateBinder(
             mainQml = mainQml,
             viewModel = viewModel,
@@ -179,6 +180,10 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // never recovers, and backing out of Settings lands on a dead screen (see
         // docs/troubleshooting.md, blank-screen entry).
         firstRun = savedInstanceState == null
+
+        mainQml.setStatusChangeListener(this)
+        qtQuickView.loadContent(mainQml)
+        qtHost.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
     }
 
     override fun onStart() {

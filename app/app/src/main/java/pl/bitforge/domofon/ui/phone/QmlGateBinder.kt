@@ -51,14 +51,20 @@ class QmlGateBinder(
     }
 
     /**
-     * Call exactly when the view reports `QtQmlStatus.READY`: seeds the scene with the
-     * state the collectors dropped while unready, and wires the QML→Kotlin signals.
+     * Call when the view reports `QtQmlStatus.READY`: seeds the scene with the state the
+     * collectors dropped while unready, and wires the QML→Kotlin signals.
+     *
+     * Re-seeding on a repeated READY is harmless (it renders current state), but the
+     * signal listeners are connected **once**: `QtQuickView` can re-emit READY, and a
+     * second `connect…Listener` would leave the first connected — every button press then
+     * sends its command twice, and the leaked listener holds the activity for good.
      */
     fun onQmlReady() {
         ready = true
         render(viewModel.uiState.value)
         viewModel.frame.value?.let { mainQml.cameraFrame = frames.write(it) }
 
+        if (commandListenerId != 0 || settingsListenerId != 0) return
         commandListenerId = mainQml.connectCommandRequestedListener { _, action ->
             viewModel.send(action)
         }
