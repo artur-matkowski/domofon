@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.mqtt.GateService
 
 /**
  * Backs the button inside the heads-up notification, so tapping *Open gate* on the car
@@ -45,7 +46,7 @@ class GateCommandReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
-                val ok = GateRepository.sendCommandAwait(action)
+                val ok = GateService.instance.sendCommandAwait(action)
                 Log.i(TAG, "notification action '$action' -> ${if (ok) "sent" else "FAILED"}")
                 // The dismissal above was the acknowledgement. Without this, a command that
                 // never left the phone looks exactly like one that worked.

@@ -24,17 +24,17 @@ import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.GatePolicy
-import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 import pl.bitforge.domofon.geo.formatHomeDistance
 
 /**
  * The car screen. Note what is absent: no MQTT, no state parsing — the same
- * [GateRepository] the phone UI uses drives this too. Android Auto renders only Car App
+ * [GateService] the phone UI uses drives this too. Android Auto renders only Car App
  * Library templates, so this is a grid (or a pane, when a camera is configured), not QML.
  *
- * Two buttons: the state-dependent one — [GateRepository.primaryAction], Open or Close but
+ * Two buttons: the state-dependent one — [GatePolicy.primaryAction], Open or Close but
  * never both, the same call the heads-up notification makes so the two can never contradict
  * each other — and Stop, which is unconditional because a gate you want halted is a gate
  * you want halted whatever it thinks it is doing. The phone's third button is that same
@@ -79,10 +79,10 @@ class GateScreen(
         // so a burst is both wasteful and visible; 150 ms folds one round of them together
         // without being noticeable on a button press.
         listOf(
-            GateRepository.gateState,
-            GateRepository.bridgeStatus,
-            GateRepository.connection,
-            GateRepository.lastError,
+            GateService.instance.gateState,
+            GateService.instance.bridgeStatus,
+            GateService.instance.connection,
+            GateService.instance.lastError,
             ConfigStore.config,
             grabber.frame,
             distanceTracker.distance,
@@ -101,20 +101,20 @@ class GateScreen(
                 .build()
         }
 
-        val state = GateRepository.gateState.value.state
-        val primary = GateRepository.primaryAction(state)
+        val state = GateService.instance.gateState.value.state
+        val primary = GatePolicy.primaryAction(state)
 
         // The status line is derived once, in the backend, and rendered verbatim here and on
-        // the phone — see [gateStatusLine] for why the wording lives in a single place.
+        // the phone — see [GatePolicy.gateStatusLine] for why the wording lives in one place.
         val statusLine = GatePolicy.gateStatusLine(
-            GateRepository.connection.value,
-            GateRepository.bridgeStatus.value,
+            GateService.instance.connection.value,
+            GateService.instance.bridgeStatus.value,
             state,
         )
 
         // Why the last command did not reach the gate, kept as its own string — identical to
         // the phone's error line — rather than folded into the status.
-        val error = GateRepository.lastError.value
+        val error = GateService.instance.lastError.value
 
         // "" whenever the tracker has nothing (feature off, not granted, no fix yet).
         val distanceText = formatHomeDistance(distanceTracker.distance.value)
@@ -141,13 +141,13 @@ class GateScreen(
             // IMAGE_TYPE_ICON rather than the default LARGE: only an icon is tinted, and the
             // tint is the whole point (see [themedIcon]).
             .setImage(themedIcon(primaryIconRes(action)), GridItem.IMAGE_TYPE_ICON)
-            .setOnClickListener { GateRepository.sendCommand(action) }
+            .setOnClickListener { GateService.instance.sendCommand(action) }
             .build()
 
         val stopButton = GridItem.Builder()
             .setTitle(STOP_LABEL)
             .setImage(themedIcon(R.drawable.ic_gate_stop), GridItem.IMAGE_TYPE_ICON)
-            .setOnClickListener { GateRepository.sendCommand(STOP_ACTION) }
+            .setOnClickListener { GateService.instance.sendCommand(STOP_ACTION) }
             .build()
 
         // A GridTemplate has no free text row: a refused command outranks the status — the
@@ -200,14 +200,14 @@ class GateScreen(
                 Action.Builder()
                     .setTitle(label)
                     .setIcon(themedIcon(primaryIconRes(action)))
-                    .setOnClickListener { GateRepository.sendCommand(action) }
+                    .setOnClickListener { GateService.instance.sendCommand(action) }
                     .build()
             )
             .addAction(
                 Action.Builder()
                     .setTitle(STOP_LABEL)
                     .setIcon(themedIcon(R.drawable.ic_gate_stop))
-                    .setOnClickListener { GateRepository.sendCommand(STOP_ACTION) }
+                    .setOnClickListener { GateService.instance.sendCommand(STOP_ACTION) }
                     .build()
             )
             .build()

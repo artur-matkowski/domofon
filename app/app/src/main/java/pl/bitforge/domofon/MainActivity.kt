@@ -29,9 +29,10 @@ import org.qtproject.qt.android.QtQuickViewContent
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.SettingsActivity
+import pl.bitforge.domofon.data.mqtt.ConnectionLease
+import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.gate.GateNotifier
-import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 import pl.bitforge.domofon.geo.formatHomeDistance
@@ -49,6 +50,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
     private val mainQml = Main()
     private var commandListenerId = 0
     private var settingsListenerId = 0
+
+    private val gate get() = GateService.instance
+
+    /** Held from onStart to onStop — this activity's claim on the MQTT connection. */
+    private var gateLease: ConnectionLease? = null
 
     /** Wraps the Qt view; also the handler the QML-load watchdog is posted on. */
     private lateinit var container: FrameLayout
@@ -175,9 +181,9 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // it — our own socket, the bridge, and the gate state — so a change in any one
         // recomputes the single line the QML renders verbatim.
         combine(
-            GateRepository.gateState,
-            GateRepository.bridgeStatus,
-            GateRepository.connection,
+            gate.gateState,
+            gate.bridgeStatus,
+            gate.connection,
         ) { gs, bridge, conn -> GatePolicy.gateStatusLine(conn, bridge, gs.state) }
             .onEach { if (qmlReady) mainQml.statusText = it }
             .launchIn(lifecycleScope)
@@ -185,7 +191,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // Why the last command did not reach the gate. Distinct from the connection reason
         // folded into the status line: the socket can be perfectly healthy and the command
         // still be refused by the bridge, so this stays its own line.
-        GateRepository.lastError
+        gate.lastError
             .onEach { if (qmlReady) mainQml.lastError = it }
             .launchIn(lifecycleScope)
 
@@ -232,7 +238,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             container.postDelayed(qmlWatchdog, QML_READY_TIMEOUT_MS)
         }
 
-        GateRepository.connect()
+        gateLease = gate.acquire("phone-ui")
         cameraGrabber.start()
         // Settings may have changed while we were away — including the home position or
         // the geofence toggle.
@@ -249,7 +255,8 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             return
         }
         container.removeCallbacks(qmlWatchdog)
-        GateRepository.disconnect()
+        gateLease?.close()
+        gateLease = null
         cameraGrabber.stop()
         homeDistanceTracker.stop()
         super.onStop()
@@ -264,11 +271,11 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
 
         // Seed the view with the state we already have.
         mainQml.statusText = GatePolicy.gateStatusLine(
-            GateRepository.connection.value,
-            GateRepository.bridgeStatus.value,
-            GateRepository.gateState.value.state,
+            gate.connection.value,
+            gate.bridgeStatus.value,
+            gate.gateState.value.state,
         )
-        mainQml.lastError = GateRepository.lastError.value
+        mainQml.lastError = gate.lastError.value
         mainQml.cameraConfigured = ConfigStore.current.camera.hasPicture
         mainQml.cameraStatus = cameraGrabber.status.value.name.lowercase()
         cameraGrabber.frame.value?.let { mainQml.cameraFrame = writeFrame(it) }
@@ -278,7 +285,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // to disconnect later. The first lambda argument is the signal name.
         commandListenerId = mainQml.connectCommandRequestedListener { _, action ->
             Log.i(TAG, "QML asked: $action")
-            GateRepository.sendCommand(action)
+            gate.sendCommand(action)
         }
 
         // The theme is NoActionBar so the QML fills the screen; the way back into setup is

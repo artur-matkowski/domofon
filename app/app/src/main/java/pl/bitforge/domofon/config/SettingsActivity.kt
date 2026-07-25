@@ -25,9 +25,10 @@ import androidx.preference.SwitchPreferenceCompat
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
+import pl.bitforge.domofon.data.mqtt.ConnectionLease
+import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.ConnectionState
 import pl.bitforge.domofon.domain.ConnectionStatus
-import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
 
 /**
@@ -77,17 +78,20 @@ class SettingsActivity : AppCompatActivity() {
     /**
      * The settings screen holds the broker connection open while it is on screen, so the
      * status row can report what the credentials being typed actually do. This is what the
-     * owner count in [GateRepository] is for — MainActivity has already let go by the time
-     * we get here, and taking a slot of our own costs nothing when it has not.
+     * connection leases in [GateService] are for — MainActivity has already let go by the
+     * time we get here, and taking a lease of our own costs nothing when it has not.
      */
+    private var gateLease: ConnectionLease? = null
+
     override fun onStart() {
         super.onStart()
-        GateRepository.connect()
+        gateLease = GateService.instance.acquire("settings")
     }
 
     /** Settings changes are only worth anything once they reach Play Services. */
     override fun onStop() {
-        GateRepository.disconnect()
+        gateLease?.close()
+        gateLease = null
         GeofenceManager.sync(this)
         super.onStop()
     }
@@ -241,11 +245,11 @@ class SettingsActivity : AppCompatActivity() {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     launch {
-                        GateRepository.connection.collect { row.summary = describe(it) }
+                        GateService.instance.connection.collect { row.summary = describe(it) }
                     }
                     launch {
                         // drop(1): the current value is what we already connected with.
-                        ConfigStore.config.drop(1).collect { GateRepository.refresh() }
+                        ConfigStore.config.drop(1).collect { GateService.instance.refresh() }
                     }
                 }
             }

@@ -11,8 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.gate.GateNotifier
-import pl.bitforge.domofon.gate.GateRepository
 
 /**
  * Entering the home fence surfaces the gate on the car screen.
@@ -77,20 +77,22 @@ internal object ArrivalPopUp {
 
     fun run(context: Context, finish: () -> Unit) {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-            // Outside the try, deliberately. Inside it, a connect() that threw — a malformed
-            // host reaches the HiveMQ builder as an IllegalArgumentException — would still
-            // run the finally, releasing an owner slot it never took. That drives the count
-            // below what the phone UI is holding, and the next disconnect() tears down a
-            // connection somebody is still using, with no lifecycle event left to rebuild it.
-            GateRepository.connect()
             try {
-                // Null when the VPN is asleep or the broker is unreachable. The pop-up says
-                // so rather than not appearing at all — silence looks identical to a bug.
-                val state = GateRepository.awaitFreshState(STATE_TIMEOUT_MS)
-                Log.i(TAG, "geofence pop-up with state=${state?.state ?: "unknown"}")
-                GateNotifier.notifyApproaching(context, state)
+                // use {} pairs the release with this acquisition and nothing else. The old
+                // owner count needed the acquire *outside* the try, because a throw between
+                // the two would release a slot never taken and tear down a connection the
+                // phone UI was still holding; a lease closes itself at most once, and
+                // acquire() no longer throws on bad config — the transport reports failures
+                // through the connection flow instead.
+                GateService.instance.acquire("arrival").use {
+                    // Null when the VPN is asleep or the broker is unreachable. The pop-up
+                    // says so rather than not appearing at all — silence looks identical to
+                    // a bug.
+                    val state = GateService.instance.awaitFreshState(STATE_TIMEOUT_MS)
+                    Log.i(TAG, "geofence pop-up with state=${state?.state ?: "unknown"}")
+                    GateNotifier.notifyApproaching(context, state)
+                }
             } finally {
-                GateRepository.disconnect()
                 finish()
             }
         }

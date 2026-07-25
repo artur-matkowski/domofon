@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.DomofonApp
 import pl.bitforge.domofon.MainActivity
 import pl.bitforge.domofon.R
+import pl.bitforge.domofon.data.mqtt.GateService
+import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.domain.GateState
 
 /**
@@ -39,14 +41,14 @@ object GateNotifier {
     /** Notify on every state change *after* the current one — the current state is not news. */
     fun observe(context: Context, scope: CoroutineScope) {
         val app = context.applicationContext
-        GateRepository.gateState
+        GateService.instance.gateState
             .drop(1)
             .onEach { notifyStateChange(app, it) }
             .launchIn(scope)
     }
 
     fun notifyStateChange(context: Context, gs: GateState) {
-        if (gs.state == GateRepository.STATE_UNKNOWN) return // disconnect reset, not news
+        if (gs.state == GatePolicy.STATE_UNKNOWN) return // disconnect reset, not news
         post(
             context = context,
             notifId = NOTIF_ID_EVENT,
@@ -58,7 +60,7 @@ object GateNotifier {
 
     /** The geofence pop-up: the whole point of the fence. */
     fun notifyApproaching(context: Context, gs: GateState?) {
-        val state = gs?.state ?: GateRepository.STATE_UNKNOWN
+        val state = gs?.state ?: GatePolicy.STATE_UNKNOWN
         post(
             context = context,
             notifId = NOTIF_ID_GEOFENCE,
@@ -140,7 +142,7 @@ object GateNotifier {
             )
 
         if (withAction) {
-            val primary = GateRepository.primaryAction(state)
+            val primary = GatePolicy.primaryAction(state)
             val icon = if (primary.action == "close") R.drawable.ic_gate_close else R.drawable.ic_gate_open
             val send = GateCommandReceiver.pendingIntent(context, primary.action, notifId)
 

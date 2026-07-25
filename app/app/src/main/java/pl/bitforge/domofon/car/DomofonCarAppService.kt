@@ -10,8 +10,9 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import pl.bitforge.domofon.camera.CameraFrameGrabber
+import pl.bitforge.domofon.data.mqtt.ConnectionLease
+import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.gate.GateNotifier
-import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 
 class DomofonCarAppService : CarAppService() {
@@ -56,15 +57,12 @@ class DomofonCarAppService : CarAppService() {
             // nobody is looking at. Silent unless the geofence feature is on and located.
             val distanceTracker = HomeDistanceTracker(carContext)
 
-            // Observer first, then connect. Registering afterwards leaks an owner slot for
-            // good if the host tears the session down in between — after which the count
-            // never returns to zero and the connection is never rebuilt.
-            //
-            // But the same window cuts the other way: onDestroy between addObserver and
-            // connect() would release a slot this session never took, dropping the count
-            // below what the phone UI holds and tearing down a connection still in use. The
-            // flag is what makes the release match the acquisition rather than the ordering.
-            var holdsConnection = false
+            // Observer first, then acquire. Registering afterwards leaks the lease for good
+            // if the host tears the session down in between — after which the connection is
+            // never released. The reverse ordering hazard the old owner-count needed a flag
+            // for is gone: onDestroy closing a still-null lease is a no-op, and closing the
+            // same lease twice is one too.
+            var lease: ConnectionLease? = null
             lifecycle.addObserver(
                 object : DefaultLifecycleObserver {
                     override fun onStart(owner: LifecycleOwner) {
@@ -76,16 +74,14 @@ class DomofonCarAppService : CarAppService() {
                         distanceTracker.stop()
                     }
                     override fun onDestroy(owner: LifecycleOwner) {
-                        if (!holdsConnection) return
-                        holdsConnection = false
-                        GateRepository.disconnect()
+                        lease?.close()
+                        lease = null
                     }
                 }
             )
 
-            // An active Android Auto session is one of the three MQTT owners (ch. 06).
-            GateRepository.connect()
-            holdsConnection = true
+            // An active Android Auto session is one of the three MQTT holders (ch. 06).
+            lease = GateService.instance.acquire("car-session")
             GateNotifier.observe(carContext, lifecycleScope)
 
             return GateScreen(carContext, grabber, distanceTracker)
