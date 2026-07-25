@@ -25,8 +25,8 @@ import androidx.preference.SwitchPreferenceCompat
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import pl.bitforge.domofon.R
-import pl.bitforge.domofon.gate.ConnectionState
-import pl.bitforge.domofon.gate.ConnectionStatus
+import pl.bitforge.domofon.domain.ConnectionState
+import pl.bitforge.domofon.domain.ConnectionStatus
 import pl.bitforge.domofon.gate.GateRepository
 import pl.bitforge.domofon.geo.GeofenceManager
 

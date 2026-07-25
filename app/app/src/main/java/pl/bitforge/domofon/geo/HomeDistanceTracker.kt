@@ -20,7 +20,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import pl.bitforge.domofon.config.ConfigStore
-import java.util.Locale
+import pl.bitforge.domofon.domain.formatHomeDistance
 import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -177,28 +177,9 @@ class HomeDistanceTracker(private val context: Context) {
 }
 
 /**
- * The distance as one line, identical on the phone and the car. Empty string when there is
- * nothing to show, which both surfaces treat as "hide the element".
- *
- * Always shows the actual range, followed by a zone word rather than collapsing to "At
- * home" — a driver watching a still wants to know how far out they are, not just that they
- * are somewhere inside the fence. The zone is banded on the geofence radius R: nearer than
- * R/2 is "at home", the R/2‥3R/2 band around the fence is "approaching home", beyond that is
- * "away from home". Range rounded (10 m, then 0.1 km) so it does not flicker between fixes.
+ * The distance as one line — wording and zone bands live in the pure
+ * [pl.bitforge.domofon.domain.formatHomeDistance]; this overload only supplies the
+ * geofence radius from the current config for callers that hold a [Reading].
  */
-fun formatHomeDistance(reading: HomeDistanceTracker.Reading?): String {
-    if (reading == null) return ""
-    val meters = reading.meters
-    val radius = ConfigStore.current.home.radiusMeters
-    val zone = when {
-        meters < radius * 0.5f -> "at home"
-        meters <= radius * 1.5f -> "approaching home"
-        else -> "away from home"
-    }
-    val range = if (meters < 1000f) {
-        "${(meters / 10f).roundToInt() * 10} m"
-    } else {
-        String.format(Locale.US, "%.1f km", meters / 1000f)
-    }
-    return "$range · $zone"
-}
+fun formatHomeDistance(reading: HomeDistanceTracker.Reading?): String =
+    formatHomeDistance(reading?.meters, ConfigStore.current.home.radiusMeters)

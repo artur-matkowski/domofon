@@ -24,8 +24,8 @@ import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.R
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
+import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.gate.GateRepository
-import pl.bitforge.domofon.gate.gateStatusLine
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 import pl.bitforge.domofon.geo.formatHomeDistance
 
@@ -106,7 +106,7 @@ class GateScreen(
 
         // The status line is derived once, in the backend, and rendered verbatim here and on
         // the phone — see [gateStatusLine] for why the wording lives in a single place.
-        val statusLine = gateStatusLine(
+        val statusLine = GatePolicy.gateStatusLine(
             GateRepository.connection.value,
             GateRepository.bridgeStatus.value,
             state,

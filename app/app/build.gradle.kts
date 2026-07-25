@@ -181,4 +181,9 @@ dependencies {
     // trip over.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    // GateProtocol parses with org.json, which is an Android platform API: the android.jar
+    // on the unit-test classpath stubs it (returnDefaultValues would make every parse
+    // return null). The real library shadows the stub for tests only; the APK keeps using
+    // the platform copy.
+    testImplementation("org.json:json:20240303")
 }

@@ -20,75 +20,24 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONException
-import org.json.JSONObject
 import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.DomofonConfig
+import pl.bitforge.domofon.domain.BridgeStatus
+import pl.bitforge.domofon.domain.ConnectionState
+import pl.bitforge.domofon.domain.ConnectionStatus
+import pl.bitforge.domofon.domain.GateEvent
+import pl.bitforge.domofon.domain.GatePolicy
+import pl.bitforge.domofon.domain.GateProtocol
+import pl.bitforge.domofon.domain.GateState
+import pl.bitforge.domofon.domain.GateStateReducer
+import pl.bitforge.domofon.domain.PrimaryAction
+import pl.bitforge.domofon.domain.ReconnectPolicy
 import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.time.Instant
-import java.time.OffsetDateTime
-import java.time.format.DateTimeParseException
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
-
-data class GateState(val state: String, val changedAt: String)
-
-/** A button label paired with the action it sends, so every surface agrees on both. */
-data class PrimaryAction(val label: String, val action: String)
-
-/**
- * What we know about the bridge, which is genuinely three-valued. A boolean here was the
- * VPN bug: it defaulted to "offline", and a bridge whose birth message is not retained
- * never corrects a freshly connected client — so every away-from-home session opened with
- * "unreachable" as a *default*, presented as a fact.
- */
-enum class BridgeStatus {
-    /** No availability message seen on this connection — includes "not connected at all". */
-    UNKNOWN,
-
-    /** The availability topic said "online", or a live state message proved it. */
-    ONLINE,
-
-    /** The availability topic said "offline" — the bridge's LWT fired. */
-    OFFLINE,
-}
-
-/**
- * What the app is doing about the broker connection.
- *
- * Distinct from [BridgeStatus], which describes the *gate service*. This describes our own
- * socket, and it exists because without it every one of these renders identically on the
- * phone — "Gate: unknown", no error. A rejected password, a broker with nothing retained
- * on it, and a denied subscription ACL were one indistinguishable screen.
- */
-enum class ConnectionStatus {
-    /** Nothing holds the connection; we are not trying. */
-    DISCONNECTED,
-
-    /** A handshake is in flight. */
-    CONNECTING,
-
-    /** CONNACK accepted and the subscriptions were granted. */
-    CONNECTED,
-
-    /** Connected, but the broker refused a subscription — we are deaf to some or all state. */
-    DEGRADED,
-
-    /** The attempt failed; [ConnectionState.reason] says how. */
-    FAILED,
-}
-
-/**
- * [ConnectionStatus] plus a line the user can act on.
- *
- * The reason is deliberately free of the host, username and password. It is rendered on the
- * phone, on the car screen and in Settings — the same reasoning that keeps the broker
- * address out of the log lines in this file applies with more force to something on screen.
- */
-data class ConnectionState(val status: ConnectionStatus, val reason: String = "")
 
 /**
  * Single source of truth for gate state and commands, and the only class that speaks MQTT.
@@ -97,33 +46,14 @@ data class ConnectionState(val status: ConnectionStatus, val reason: String = ""
  * `hc12-web-service`, so this app is just another broker client — it never touches the
  * radio, Postgres or HTTP. Which broker, which topics and which node is entirely up to
  * [ConfigStore]; see docs/02 for the topic contract.
+ *
+ * The wire vocabulary lives in [GateProtocol], the staleness rules in [GateStateReducer],
+ * the shared button/wording policy in [GatePolicy] — this object owns the client, the
+ * connection state machine and the owner counting.
  */
 object GateRepository {
 
-    const val STATE_UNKNOWN = "unknown"
-    private const val STATE_OPENED = "opened"
-
-    /**
-     * Signal name -> UI label. Deliberately *not* user-configurable: these are the
-     * protocol's vocabulary rather than a property of one deployment, and exposing seven
-     * more text fields would make the settings screen hostile for no practical gain. The
-     * topic prefixes around them are configurable, which is what actually varies.
-     */
-    private val SIGNAL_TO_STATE = mapOf(
-        "GateOpened" to STATE_OPENED,
-        "GateClosed" to "closed",
-        "GateOpening" to "opening",
-        "GateClosing" to "closing",
-        "GateStopped" to "stopped",
-        "GateStuckOpening" to "stuck_opening",
-        "GateStuckClosing" to "stuck_closing",
-    )
-
-    private val ACTION_TO_SIGNAL = mapOf(
-        "open" to "OpenGate",
-        "close" to "CloseGate",
-        "stop" to "StopGate",
-    )
+    const val STATE_UNKNOWN = GatePolicy.STATE_UNKNOWN
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -174,10 +104,18 @@ object GateRepository {
      *
      * Not read live from [ConfigStore]: the user can edit the topic prefixes while a
      * connection is open, and a message arriving mid-edit must be matched against the
-     * prefixes we actually subscribed with, not the half-typed new ones.
+     * prefixes we actually subscribed with, not the half-typed new ones. [protocol] is
+     * built from this at the same moment, for the same reason.
      */
     @Volatile
     private var active: DomofonConfig = DomofonConfig.EMPTY
+
+    /** The wire vocabulary pinned with [active]. Null exactly while no client exists. */
+    @Volatile
+    private var protocol: GateProtocol? = null
+
+    /** Per-connection staleness rules; reset in [teardown] with the rest of the connection. */
+    private val reducer = GateStateReducer()
 
     /**
      * Owner count, not a boolean: the activity, the Android Auto session and the geofence
@@ -186,16 +124,11 @@ object GateRepository {
      */
     private var owners = 0
 
-    /** Current backoff for [scheduleReconnect]. Reset to the floor on every successful connect. */
-    private var reconnectDelayMs = INITIAL_RECONNECT_MS
+    /** Backoff schedule for [scheduleReconnect]. Reset to the floor on every successful connect. */
+    private val reconnect = ReconnectPolicy()
 
     /** Runs [WATCHDOG_PERIOD_MS] while anybody holds the connection. See [startWatchdog]. */
     private var watchdog: Job? = null
-
-    private val tsLock = Any()
-
-    /** Newest `ts` seen across all gate signals. Guarded by [tsLock]. */
-    private var newestTs: Instant? = null
 
     // --- lifecycle ------------------------------------------------------------------
 
@@ -305,8 +238,7 @@ object GateRepository {
      * themselves stale and do nothing. A [disconnect] in the meantime does the same.
      */
     private fun scheduleReconnect(failedEpoch: Int) {
-        val delayMs = reconnectDelayMs
-        reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(MAX_RECONNECT_MS)
+        val delayMs = reconnect.nextDelayMs()
         scope.launch {
             delay(delayMs)
             reconnectNow(failedEpoch)
@@ -333,6 +265,7 @@ object GateRepository {
             return
         }
         active = cfg
+        protocol = GateProtocol(cfg.topics)
         val myEpoch = epoch
         _connection.value = ConnectionState(ConnectionStatus.CONNECTING)
 
@@ -362,7 +295,7 @@ object GateRepository {
             // until it was force-stopped.
             .addConnectedListener {
                 if (myEpoch != epoch) return@addConnectedListener
-                reconnectDelayMs = INITIAL_RECONNECT_MS
+                reconnect.reset()
                 _connection.value = ConnectionState(ConnectionStatus.CONNECTED)
                 // Re-subscribe on EVERY (re)connect. The session is clean, so the broker
                 // holds no subscriptions for us; without this, a reconnect leaves the app
@@ -446,6 +379,7 @@ object GateRepository {
         epoch++
         val old = client
         client = null
+        protocol = null
         _bridgeStatus.value = BridgeStatus.UNKNOWN
 
         // A retired client must not leave CONNECTED behind. Every caller either opens a
@@ -459,7 +393,7 @@ object GateRepository {
         // it would let awaitFreshState() return this value instantly on the next connect —
         // the arrival pop-up would confidently announce whatever the gate was doing hours
         // ago, without a single byte having crossed the network.
-        synchronized(tsLock) { newestTs = null }
+        reducer.reset()
         _gateState.value = GateState(STATE_UNKNOWN, "")
 
         old?.disconnect()?.whenComplete { _, err ->
@@ -493,20 +427,16 @@ object GateRepository {
     private fun subscribeAll(myEpoch: Int) {
         val c = client ?: return
         if (myEpoch != epoch) return
-        val cfg = active
-        val subscriptions =
-            SIGNAL_TO_STATE.keys.map { cfg.topics.rxPrefix + it to qos(cfg.mqtt.qosState) } +
-                (cfg.topics.availability to qos(cfg.mqtt.qosAvailability)) +
-                (cfg.topics.error to qos(cfg.mqtt.qosAvailability))
-        subscriptions.forEach { (topic, topicQos) ->
+        val proto = protocol ?: return
+        proto.subscriptions(active.mqtt).forEach { sub ->
             c.subscribeWith()
-                .topicFilter(topic)
-                .qos(topicQos)
+                .topicFilter(sub.topic)
+                .qos(qos(sub.qos))
                 .callback(::onMessage)
                 .send()
                 .whenComplete { _, err ->
                     if (err != null) {
-                        Log.w(TAG, "subscribe $topic failed", err)
+                        Log.w(TAG, "subscribe ${sub.topic} failed", err)
                         // A denied subscription is invisible otherwise: the client stays
                         // happily connected and simply never hears anything, which reads on
                         // screen as a working app attached to a silent gate.
@@ -562,127 +492,42 @@ object GateRepository {
     // --- inbound --------------------------------------------------------------------
 
     private fun onMessage(publish: Mqtt3Publish) {
-        val topic = publish.topic.toString()
-        val payload = String(publish.payloadAsBytes)
-        val cfg = active
-
-        if (topic == cfg.topics.availability) {
-            _bridgeStatus.value = when (payload) {
-                "online" -> BridgeStatus.ONLINE
-                "offline" -> BridgeStatus.OFFLINE
-                // Junk on the availability topic is not evidence in either direction.
-                else -> BridgeStatus.UNKNOWN
+        val proto = protocol ?: return
+        val event = proto.decode(
+            topic = publish.topic.toString(),
+            payload = String(publish.payloadAsBytes),
+            retained = publish.isRetain,
+        )
+        when (event) {
+            is GateEvent.Availability -> {
+                _bridgeStatus.value = event.status
+                Log.i(TAG, "availability -> ${event.status}")
             }
-            Log.i(TAG, "availability -> $payload")
-            return
-        }
 
-        if (topic == cfg.topics.error) {
-            onBridgeError(payload)
-            return
-        }
+            is GateEvent.Signal -> {
+                // A live (non-retained) state message can only have been published by a
+                // running bridge, so it is proof of life even when the availability topic
+                // never spoke — the case where the bridge's birth message is not retained
+                // and we connected after it. Retained messages prove nothing: the broker
+                // replays them for years.
+                if (!event.retained) _bridgeStatus.value = BridgeStatus.ONLINE
 
-        val state = SIGNAL_TO_STATE[topic.removePrefix(cfg.topics.rxPrefix)] ?: return
-        val rawTs = try {
-            JSONObject(payload).optString("ts")
-        } catch (e: JSONException) {
-            Log.w(TAG, "rx payload is not JSON: $topic", e)
-            return
-        }
-        val ts = parseTs(rawTs) ?: run {
-            Log.w(TAG, "rx $topic has unparseable ts '$rawTs'")
-            return
-        }
-
-        // A stamp from the future is either clock skew on the bridge or someone publishing
-        // junk to a broker we may be reaching over plaintext. Accepting one would be
-        // permanent: it becomes `newestTs`, and from then on every genuine message — live
-        // or retained — looks older and gets dropped, so the app freezes on a stale state
-        // for the rest of the process lifetime while looking perfectly healthy.
-        if (ts.isAfter(Instant.now().plusSeconds(FUTURE_TS_TOLERANCE_S))) {
-            Log.w(TAG, "rx $topic has a ts too far in the future — ignored")
-            return
-        }
-
-        // A live (non-retained) state message can only have been published by a running
-        // bridge, so it is proof of life even when the availability topic never spoke —
-        // the case where the bridge's birth message is not retained and we connected after
-        // it. Retained messages prove nothing: the broker replays them for years.
-        if (!publish.isRetain) _bridgeStatus.value = BridgeStatus.ONLINE
-
-        synchronized(tsLock) {
-            val current = newestTs
-            if (current != null) {
-                // Retained rx topics are last-value-per-signal and arrive in arbitrary
-                // order (observed: GateClosed 11:40:10 landed before GateOpening 11:40:05),
-                // so only a strictly newer stamp may move the state.
-                //
-                // A live message wins ties instead of losing them — that is what lets it
-                // override a retained value carrying the same one-second stamp. It still
-                // may not move the state *backwards*, which the old code allowed and which
-                // is how one skewed publish used to stick permanently.
-                val stale = if (publish.isRetain) !ts.isAfter(current) else ts.isBefore(current)
-                if (stale) return
+                val next = reducer.reduce(event) ?: return
+                _gateState.value = next
+                Log.i(TAG, "state -> ${next.state} (retained=${event.retained})")
             }
-            newestTs = ts
 
-            // Inside the lock: the guard and the write have to be one step, or two threads
-            // can pass the check in order and then publish out of order. Harmless today
-            // (one Netty event loop serialises this callback), a real bug the moment a
-            // subscription is given its own executor.
-            _gateState.value = GateState(state, rawTs)
-        }
+            is GateEvent.BridgeError ->
+                reportError("Gate service refused the command: ${event.reason}")
 
-        Log.i(TAG, "state -> $state (retained=${publish.isRetain})")
-    }
-
-    /**
-     * A rejection the bridge published, turned into a line on screen — but only if it is
-     * ours.
-     *
-     * The error topic is a shared diagnostic channel: every publisher's rejections land on
-     * it, including other tools on the same broker. The `topic` field is what attributes
-     * one, so anything outside our own command prefix is somebody else's problem and must
-     * not surface here as if the user's last tap had failed.
-     */
-    private fun onBridgeError(payload: String) {
-        val json = try {
-            JSONObject(payload)
-        } catch (e: JSONException) {
-            Log.w(TAG, "error payload is not JSON", e)
-            return
-        }
-        val rejected = json.optString("topic")
-        if (!rejected.startsWith(active.topics.txPrefix)) {
-            Log.i(TAG, "ignoring an error for $rejected — not one of ours")
-            return
-        }
-        val reason = json.optString("reason").ifEmpty { "the gate service refused the command" }
-        reportError("Gate service refused the command: $reason")
-    }
-
-    private fun parseTs(raw: String): Instant? {
-        if (raw.isEmpty()) return null
-        return try {
-            OffsetDateTime.parse(raw).toInstant()
-        } catch (e: DateTimeParseException) {
-            try {
-                Instant.parse(raw)
-            } catch (e2: DateTimeParseException) {
-                null
-            }
+            is GateEvent.Ignored -> Log.w(TAG, "rx ignored: ${event.why}")
         }
     }
 
     // --- outbound -------------------------------------------------------------------
 
-    /**
-     * The single home of the button rule, so the car screen and the notification can never
-     * disagree: anything that is not open offers Open.
-     */
-    fun primaryAction(state: String): PrimaryAction =
-        if (state == STATE_OPENED) PrimaryAction("Close gate", "close")
-        else PrimaryAction("Open gate", "open")
+    /** The shared button rule — see [GatePolicy.primaryAction]. */
+    fun primaryAction(state: String): PrimaryAction = GatePolicy.primaryAction(state)
 
     /** Fire-and-forget, for UI callers that already hold the connection. */
     fun sendCommand(action: String) {
@@ -694,11 +539,6 @@ object GateRepository {
      * uses this: it fires with the app closed and must not return before the send lands.
      */
     suspend fun sendCommandAwait(action: String, timeoutMs: Long = 8_000): Boolean {
-        val signal = ACTION_TO_SIGNAL[action] ?: run {
-            Log.w(TAG, "unknown action: $action")
-            return false
-        }
-
         connect()
         try {
             // One budget for the whole operation, not one per stage. Two sequential 8 s
@@ -724,24 +564,26 @@ object GateRepository {
             }
 
             val cfg = active
-            val payload = JSONObject().put(cfg.topics.payloadKey, cfg.topics.nodeId).toString()
+            val command = protocol?.encodeCommand(action, cfg.topics.nodeId, cfg.topics.payloadKey)
+            if (command == null) {
+                Log.w(TAG, "unknown action: $action")
+                return false
+            }
             val acked = CompletableDeferred<Boolean>()
-            val topic = cfg.topics.txPrefix + signal
             c.publishWith()
-                .topic(topic)
+                .topic(command.topic)
                 .qos(qos(cfg.mqtt.qosCommand))
-                // NOT retained. hc12-web-service drops retained tx outright (its replay
-                // guard), so a retained command would be silently ignored — and without
-                // that guard it would re-key the transmitter on every service restart.
+                // NOT retained — see [GateProtocol.encodeCommand] for why a retained
+                // command is at best silently ignored.
                 .retain(false)
-                .payload(payload.toByteArray())
+                .payload(command.payload.toByteArray())
                 .send()
                 .whenComplete { _, err ->
                     // The resolved topic, not just the signal name: a wrong prefix is the
                     // one failure this line can prove or rule out at a glance, and it
                     // carries no host and no credentials.
-                    if (err != null) Log.w(TAG, "publish $topic failed", err)
-                    else Log.i(TAG, "tx -> $topic")
+                    if (err != null) Log.w(TAG, "publish ${command.topic} failed", err)
+                    else Log.i(TAG, "tx -> ${command.topic}")
                     acked.complete(err == null)
                 }
 
@@ -767,7 +609,7 @@ object GateRepository {
      * The settle delay is not padding either. Retained topics arrive as a burst in
      * arbitrary order, so the first to land is not the newest — returning on it produced a
      * pop-up reading "opening" when the gate had been closed for two minutes. Waiting for
-     * the burst to finish lets the max-ts rule in [onMessage] pick the real winner.
+     * the burst to finish lets the max-ts rule in [GateStateReducer] pick the real winner.
      */
     suspend fun awaitFreshState(timeoutMs: Long, settleMs: Long = 750): GateState? =
         withTimeoutOrNull(timeoutMs) {
@@ -777,12 +619,6 @@ object GateRepository {
         }
 
     private const val TAG = "Domofon"
-
-    /**
-     * How far ahead of our own clock a bridge timestamp may sit before we disbelieve it.
-     * Generous, because the phone and the bridge are both plausibly a little off.
-     */
-    private const val FUTURE_TS_TOLERANCE_S = 300L
 
     /**
      * How long a command error stays on screen.
@@ -799,8 +635,4 @@ object GateRepository {
      * second tap.
      */
     private const val WATCHDOG_PERIOD_MS = 15_000L
-
-    /** Reconnect backoff bounds — the same 1 s → 30 s the built-in reconnector used. */
-    private const val INITIAL_RECONNECT_MS = 1_000L
-    private const val MAX_RECONNECT_MS = 30_000L
 }

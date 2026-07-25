@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.DomofonApp
 import pl.bitforge.domofon.MainActivity
 import pl.bitforge.domofon.R
+import pl.bitforge.domofon.domain.GateState
 
 /**
  * Turns gate state into heads-up notifications.

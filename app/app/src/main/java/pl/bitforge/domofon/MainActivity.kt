@@ -29,9 +29,9 @@ import org.qtproject.qt.android.QtQuickViewContent
 import pl.bitforge.domofon.camera.CameraFrameGrabber
 import pl.bitforge.domofon.config.ConfigStore
 import pl.bitforge.domofon.config.SettingsActivity
+import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.gate.GateNotifier
 import pl.bitforge.domofon.gate.GateRepository
-import pl.bitforge.domofon.gate.gateStatusLine
 import pl.bitforge.domofon.geo.GeofenceManager
 import pl.bitforge.domofon.geo.HomeDistanceTracker
 import pl.bitforge.domofon.geo.formatHomeDistance
@@ -178,7 +178,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
             GateRepository.gateState,
             GateRepository.bridgeStatus,
             GateRepository.connection,
-        ) { gs, bridge, conn -> gateStatusLine(conn, bridge, gs.state) }
+        ) { gs, bridge, conn -> GatePolicy.gateStatusLine(conn, bridge, gs.state) }
             .onEach { if (qmlReady) mainQml.statusText = it }
             .launchIn(lifecycleScope)
 
@@ -263,7 +263,7 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         QtRestartActivity.clearRestartStamp(this)
 
         // Seed the view with the state we already have.
-        mainQml.statusText = gateStatusLine(
+        mainQml.statusText = GatePolicy.gateStatusLine(
             GateRepository.connection.value,
             GateRepository.bridgeStatus.value,
             GateRepository.gateState.value.state,
