@@ -6,9 +6,6 @@ import androidx.car.app.Screen
 import androidx.car.app.model.Action
 import androidx.car.app.model.CarColor
 import androidx.car.app.model.CarIcon
-import androidx.car.app.model.GridItem
-import androidx.car.app.model.GridTemplate
-import androidx.car.app.model.ItemList
 import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
@@ -22,35 +19,50 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.R
+import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.ui.shared.GateUiState
 import pl.bitforge.domofon.ui.shared.GateViewModel
 
 /**
  * The car screen. Note what is absent: no MQTT, no state parsing, no policy — the same
- * [GateViewModel] shape the phone UI renders drives this too. Android Auto renders only
- * Car App Library templates, so this is a grid (or a pane, when a camera is configured),
- * not QML.
+ * [GateViewModel] shape the phone UI renders drives this too. Android Auto renders only Car
+ * App Library templates, so this is a pane, not QML.
  *
- * Two buttons: the state-dependent one — [GateUiState.primaryAction], Open or Close but
- * never both, the same value the heads-up notification derives so the two can never
- * contradict each other — and Stop, which is unconditional because a gate you want halted
- * is a gate you want halted whatever it thinks it is doing. The phone's third button is
- * that same pair plus the redundant half of Open/Close; the car cannot hold three anyway,
- * as a Pane takes at most two actions (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`).
- * The arrival notification stays at one button — a driver reaching for a heads-up needs
- * one target.
+ * Two buttons: the state-dependent one — [GateUiState.primaryAction], Open or Close but never
+ * both, the same value the heads-up notification derives so the two can never contradict each
+ * other — and Stop, which is unconditional because a gate you want halted is a gate you want
+ * halted whatever it thinks it is doing. The phone's third button is that same pair plus the
+ * redundant half of Open/Close; the car cannot hold three anyway, as a Pane takes at most two
+ * actions (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`). The arrival notification stays at
+ * one button — a driver reaching for a heads-up needs one target.
  *
- * With a camera configured the template is a [PaneTemplate]: the pane image is the only
- * template slot that renders a large bitmap, and the session's camera grabber feeds it a
- * fresh still every few seconds. Which template we build depends only on *configuration* —
- * never on fetch health — so the type cannot flip mid-session; an unreachable camera
- * degrades to the last good frame or a placeholder icon inside the same pane.
+ * ## Why everything volatile lives in a text line or the image
+ *
+ * The host allows **five template pushes per task** and then, in its own words, "displays an
+ * error message to the user before closing the app" — which on the head unit reads as *this
+ * action is not allowed while driving*, followed by the app vanishing. A push is free only
+ * when it counts as a **refresh**, and for [PaneTemplate] the comparison is exactly:
+ *
+ * > the template title has not changed, and the number of rows and **the title of each row**
+ * > have not changed.
+ *
+ * Row *texts*, the pane image and the action titles are not compared at all. So the rule here
+ * is: the template title and the row title are constants, and every value that moves goes in
+ * a text line, the image, or an action label. That way the screen can update forever without
+ * advancing the quota.
+ *
+ * This is a correction, not a new constraint. The previous version put [GateUiState.statusText]
+ * in the row *title* on the strength of a comment claiming the whole row had to keep its
+ * "strings" stable — an over-generalisation of the row-*count* fix in `f3547cf`, which put the
+ * one genuinely volatile value in the one genuinely compared slot. Five status changes into a
+ * drive, the host closed the app; switching to navigation and back cleared it, because
+ * re-entering from the launcher resets the quota (Artur, live testing 2026-07-27).
  *
  * There is deliberately **no setup here**. Play's car app quality rules (IT-1) allow a
- * smart-home app to show device state and offer simple one-touch control while driving,
- * and explicitly disallow configuration — choosing brokers, entering credentials, picking
- * locations. Unconfigured, this screen says so and points at the phone; it does not offer
- * to fix it.
+ * smart-home app to show device state and offer simple one-touch control while driving, and
+ * explicitly disallow configuration — choosing brokers, entering credentials, picking
+ * locations. Unconfigured, this screen says so and points at the phone; it does not offer to
+ * fix it.
  */
 class GateScreen(
     carContext: CarContext,
@@ -65,15 +77,12 @@ class GateScreen(
     @OptIn(FlowPreview::class)
     private fun observeState() {
         // Redraw whenever the derived state or the camera frame moves — the ViewModel has
-        // already folded the seven backend flows into these two. Both are naturally slow
-        // (state changes; the grabber's snapshot cadence), so the invalidate rate stays
-        // well inside host etiquette.
+        // already folded the seven backend flows into these two.
         //
-        // debounce, because the two are independent: a snapshot landing in the same moment
-        // as a state change used to push two templates back to back. The host counts
-        // non-refresh templates against a per-step quota and animates between them, so a
-        // burst is both wasteful and visible; 150 ms folds one round of them together
-        // without being noticeable on a button press.
+        // debounce, because the two are independent: a snapshot landing in the same moment as
+        // a state change used to push two templates back to back. Now that every push is a
+        // refresh this is about repaint economy rather than quota, but the host still animates
+        // between them and 150 ms folds one round together unnoticeably.
         merge(viewModel.uiState, viewModel.frame)
             .debounce(INVALIDATE_DEBOUNCE_MS)
             .onEach { invalidate() }
@@ -90,65 +99,48 @@ class GateScreen(
                 .build()
         }
 
-        // Same gate as the phone panel: no camera configured, no frame coming, and the
-        // camera template would be a permanent empty placeholder on the head unit.
-        return if (state.cameraConfigured) {
-            cameraTemplate(state)
-        } else {
-            gridTemplate(state)
-        }
+        return gatePane(state)
     }
 
-    /** The camera-less layout: the two gate buttons as grid cells. */
-    private fun gridTemplate(state: GateUiState): Template {
-        val primaryButton = GridItem.Builder()
-            .setTitle(state.primaryAction.label)
-            // IMAGE_TYPE_ICON rather than the default LARGE: only an icon is tinted, and the
-            // tint is the whole point (see [themedIcon]).
-            .setImage(themedIcon(primaryIconRes(state.primaryAction.action)), GridItem.IMAGE_TYPE_ICON)
-            .setOnClickListener { viewModel.send(state.primaryAction.action) }
-            .build()
-
-        val stopButton = GridItem.Builder()
-            .setTitle(STOP_LABEL)
-            .setImage(themedIcon(R.drawable.ic_gate_stop), GridItem.IMAGE_TYPE_ICON)
-            .setOnClickListener { viewModel.send(STOP_ACTION) }
-            .build()
-
-        // A GridTemplate has no free text row: a refused command outranks the status — the
-        // driver needs to know their tap did nothing — and distance folds into the header.
-        val heading = state.lastError.ifEmpty { state.statusText }
-        return GridTemplate.Builder()
-            .setTitle(if (state.homeDistance.isEmpty()) heading else "$heading · ${state.homeDistance}")
-            .setHeaderAction(Action.APP_ICON)
-            .setSingleList(
-                ItemList.Builder().addItem(primaryButton).addItem(stopButton).build()
-            )
-            .build()
-    }
-
-    /** Camera configured: pane with the latest still and the gate buttons beneath it. */
-    private fun cameraTemplate(state: GateUiState): Template {
+    /**
+     * The one configured layout, camera or not.
+     *
+     * A [androidx.car.app.model.GridTemplate] used to serve the camera-less case, with the two
+     * buttons as grid cells. It is gone for two independent reasons. Its refresh rule compares
+     * the template title *and each grid item's title*, and this app's were
+     * `"<status> · <distance>"` and `"Open gate"`/`"Close gate"` — both moving, so every single
+     * push was a step. And `GridTemplate` is not among the types the host accepts as the last
+     * template of a task, so the camera-less path had no safe landing either.
+     *
+     * Collapsing to one template also makes the "type cannot flip mid-session" invariant true
+     * for the first time: it used to switch Grid⇄Pane when the camera source changed on the
+     * phone under a live session. Now only *configured at all* selects a type, and
+     * `cameraConfigured` merely decides what goes in the image slot.
+     */
+    private fun gatePane(state: GateUiState): Template {
         val frame = viewModel.frame.value
-        val image =
-            if (frame != null) CarIcon.Builder(IconCompat.createWithBitmap(frame.bitmap)).build()
-            else themedIcon(R.drawable.ic_camera_off)
+        val image = when {
+            frame != null -> CarIcon.Builder(IconCompat.createWithBitmap(frame.bitmap)).build()
+            // Camera configured but nothing arriving yet — an unreachable camera degrades
+            // inside the same pane rather than changing its shape.
+            state.cameraConfigured -> themedIcon(R.drawable.ic_camera_off)
+            // No camera at all. The image is free to change on a refresh, so the largest slot
+            // on the screen carries the gate state as a picture instead of a dead placeholder.
+            else -> themedIcon(gateStateIconRes(state.gateState))
+        }
 
-        // Exactly one row, always — the shape of this template must not change between
-        // snapshots. The host only updates a pane *in place* when the new template counts as
-        // a refresh of the last one, which turns on the rows: change their number or their
-        // strings and you get a screen transition instead, and the whole head unit dims and
-        // comes back. That is what the old rotating spinner in this row's title bought, once
-        // every snapshot interval. So the row carries the status as its title and hangs the
-        // error and the distance off it as text lines (a pane row allows two), leaving the
-        // fresh bitmap as the only difference between one snapshot and the next.
+        // Exactly one row, always, and its title is a constant — those are the two things the
+        // host compares. Everything that moves hangs off it as text (a pane row allows two
+        // lines, ROW_CONSTRAINTS_PANE) and is invisible to the refresh check.
         val row = Row.Builder()
-            .setTitle(state.statusText)
+            .setTitle(ROW_TITLE)
+            .addText(state.statusText)
             .apply {
-                // A refused command outranks distance: the driver needs to know their tap
-                // did nothing more than they need to know how far away they are.
-                if (state.lastError.isNotEmpty()) addText(state.lastError)
-                if (state.homeDistance.isNotEmpty()) addText(state.homeDistance)
+                // A refused command outranks distance: the driver needs to know their tap did
+                // nothing more than they need to know how far away they are. Both fit only
+                // because there are two lines and the status no longer occupies one of them.
+                val second = state.lastError.ifEmpty { state.homeDistance }
+                if (second.isNotEmpty()) addText(second)
             }
             .build()
 
@@ -183,11 +175,31 @@ class GateScreen(
         if (action == "close") R.drawable.ic_gate_close else R.drawable.ic_gate_open
 
     /**
+     * The gate itself as a picture, for the camera-less pane.
+     *
+     * Deliberately a different visual family from [primaryIconRes]: those are *action* arrows
+     * on a button ("this will close it"), these are a barred panel between two posts ("this is
+     * where it is"). They sit side by side on the same screen, and an arrow in both places
+     * would read as the picture agreeing or arguing with the button.
+     */
+    @DrawableRes
+    private fun gateStateIconRes(state: String): Int = when (state) {
+        GatePolicy.STATE_OPENED -> R.drawable.ic_gate_state_open
+        GatePolicy.STATE_CLOSED -> R.drawable.ic_gate_state_closed
+        GatePolicy.STATE_OPENING, GatePolicy.STATE_CLOSING -> R.drawable.ic_gate_state_moving
+        GatePolicy.STATE_STOPPED,
+        GatePolicy.STATE_STUCK_OPENING,
+        GatePolicy.STATE_STUCK_CLOSING,
+        -> R.drawable.ic_gate_state_fault
+        else -> R.drawable.ic_gate_state_unknown
+    }
+
+    /**
      * A drawable as a [CarIcon] the head unit is allowed to recolour. Every icon in this app
-     * is a white silhouette — right for a notification, invisible on a light head-unit
-     * theme. [CarColor.DEFAULT] hands the choice to the host, which knows whether it is
-     * currently drawing dark-on-light or light-on-dark. Deliberately not applied to the
-     * camera still: tinting a photograph would flatten it to a monochrome smear.
+     * is a white silhouette — right for a notification, invisible on a light head-unit theme.
+     * [CarColor.DEFAULT] hands the choice to the host, which knows whether it is currently
+     * drawing dark-on-light or light-on-dark. Deliberately not applied to the camera still:
+     * tinting a photograph would flatten it to a monochrome smear.
      */
     private fun themedIcon(@DrawableRes res: Int): CarIcon =
         CarIcon.Builder(IconCompat.createWithResource(carContext, res))
@@ -197,6 +209,13 @@ class GateScreen(
     private companion object {
         const val STOP_LABEL = "Stop"
         const val STOP_ACTION = "stop"
+
+        /**
+         * The row's title. **Must stay constant** — it is one of the three things the host
+         * compares when deciding whether a push is a free refresh. See the class doc.
+         */
+        const val ROW_TITLE = "Gate"
+
         const val INVALIDATE_DEBOUNCE_MS = 150L
     }
 }
