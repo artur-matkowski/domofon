@@ -8,12 +8,45 @@ class GatePolicyTest {
 
     // --- primaryAction ---------------------------------------------------------------
 
+    /**
+     * All eight states named explicitly, none omitted. The previous version of this test
+     * asserted the old rule ("anything not opened offers Open") and quietly left
+     * `stuck_closing` out of its list, so the one state nobody had thought about was also
+     * the one nothing checked.
+     */
     @Test
-    fun `opened offers close, everything else offers open`() {
-        assertEquals(PrimaryAction("Close gate", "close"), GatePolicy.primaryAction("opened"))
-        listOf("closed", "opening", "closing", "stopped", "stuck_opening", "unknown").forEach {
-            assertEquals("state=$it", PrimaryAction("Open gate", "open"), GatePolicy.primaryAction(it))
-        }
+    fun `open and travelling-open offer close, everything else offers open`() {
+        val close = PrimaryAction("Close gate", "close")
+        val open = PrimaryAction("Open gate", "open")
+
+        listOf(
+            GatePolicy.STATE_OPENED,
+            // The bug Artur hit: mid-travel offered "Open gate", an action that does nothing.
+            GatePolicy.STATE_OPENING,
+            // Jammed on the way open — it is an open gate, and Close is what clears it.
+            GatePolicy.STATE_STUCK_OPENING,
+        ).forEach { assertEquals("state=$it", close, GatePolicy.primaryAction(it)) }
+
+        listOf(
+            GatePolicy.STATE_CLOSED,
+            GatePolicy.STATE_CLOSING,
+            // Halted mid-travel is neither; Open is the safer default for someone driving up.
+            GatePolicy.STATE_STOPPED,
+            GatePolicy.STATE_STUCK_CLOSING,
+            GatePolicy.STATE_UNKNOWN,
+        ).forEach { assertEquals("state=$it", open, GatePolicy.primaryAction(it)) }
+    }
+
+    /** The rule keys off the protocol's own vocabulary, so nothing may fall outside it. */
+    @Test
+    fun `every protocol state is covered by the rule`() {
+        val known = setOf(
+            GatePolicy.STATE_OPENED, GatePolicy.STATE_CLOSED,
+            GatePolicy.STATE_OPENING, GatePolicy.STATE_CLOSING,
+            GatePolicy.STATE_STOPPED,
+            GatePolicy.STATE_STUCK_OPENING, GatePolicy.STATE_STUCK_CLOSING,
+        )
+        assertEquals(known, GateProtocol.SIGNAL_TO_STATE.values.toSet())
     }
 
     // --- gateStatusLine: the full matrix ---------------------------------------------

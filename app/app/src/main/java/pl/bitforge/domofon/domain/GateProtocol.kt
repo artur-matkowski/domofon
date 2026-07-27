@@ -116,12 +116,12 @@ class GateProtocol(private val topics: DomofonConfig.Topics) {
          */
         val SIGNAL_TO_STATE = mapOf(
             "GateOpened" to GatePolicy.STATE_OPENED,
-            "GateClosed" to "closed",
-            "GateOpening" to "opening",
-            "GateClosing" to "closing",
-            "GateStopped" to "stopped",
-            "GateStuckOpening" to "stuck_opening",
-            "GateStuckClosing" to "stuck_closing",
+            "GateClosed" to GatePolicy.STATE_CLOSED,
+            "GateOpening" to GatePolicy.STATE_OPENING,
+            "GateClosing" to GatePolicy.STATE_CLOSING,
+            "GateStopped" to GatePolicy.STATE_STOPPED,
+            "GateStuckOpening" to GatePolicy.STATE_STUCK_OPENING,
+            "GateStuckClosing" to GatePolicy.STATE_STUCK_CLOSING,
         )
 
         val ACTION_TO_SIGNAL = mapOf(

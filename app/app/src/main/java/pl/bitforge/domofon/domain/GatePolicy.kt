@@ -8,17 +8,44 @@ import pl.bitforge.domofon.domain.camera.AudioStatus
  */
 object GatePolicy {
 
-    /** What [GateState.state] holds when nothing has been heard on the current connection. */
+    /**
+     * The gate vocabulary, in one place. These are the values of
+     * [GateProtocol.SIGNAL_TO_STATE] — the protocol owns which *signal* maps to which, this
+     * owns the strings themselves, so a rule below can name a state instead of repeating a
+     * literal. [STATE_UNKNOWN] is the only one with no signal behind it: it is what
+     * [GateState.state] holds when nothing has been heard on the current connection.
+     */
     const val STATE_UNKNOWN = "unknown"
     const val STATE_OPENED = "opened"
+    const val STATE_CLOSED = "closed"
+    const val STATE_OPENING = "opening"
+    const val STATE_CLOSING = "closing"
+    const val STATE_STOPPED = "stopped"
+    const val STATE_STUCK_OPENING = "stuck_opening"
+    const val STATE_STUCK_CLOSING = "stuck_closing"
 
     /**
-     * The single home of the button rule: anything that is not open offers Open. The car
-     * screen and the notification action both call this, which is what keeps them from
-     * contradicting each other.
+     * Open, or travelling toward open. The rule below is the only thing that reads this.
+     *
+     * [STATE_STUCK_OPENING] belongs here: a gate jammed on its way open is an *open* gate as
+     * far as anyone driving up to it is concerned, and retracting it is the move that clears
+     * the jam. [STATE_STOPPED] deliberately does not — halted mid-travel it is neither, and
+     * Open is the safer default for a driver who wants in.
+     */
+    private val OPEN_ISH = setOf(STATE_OPENED, STATE_OPENING, STATE_STUCK_OPENING)
+
+    /**
+     * The single home of the button rule: a gate that is open or heading open offers Close,
+     * everything else offers Open. The car screen and the notification action both call
+     * this, which is what keeps them from contradicting each other.
+     *
+     * It used to be `state == STATE_OPENED`, which made the mid-travel states offer an
+     * action that does nothing — a gate already `opening` showed "Open gate", and the one
+     * button on the car screen was the wrong one for the entire time the gate was moving
+     * (Artur, live testing 2026-07-27).
      */
     fun primaryAction(state: String): PrimaryAction =
-        if (state == STATE_OPENED) PrimaryAction("Close gate", "close")
+        if (state in OPEN_ISH) PrimaryAction("Close gate", "close")
         else PrimaryAction("Open gate", "open")
 
     /**
