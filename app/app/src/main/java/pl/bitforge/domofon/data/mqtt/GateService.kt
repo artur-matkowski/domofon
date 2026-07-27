@@ -381,8 +381,21 @@ class GateService(
 
     // --- outbound -------------------------------------------------------------------
 
-    /** The shared button rule — see [GatePolicy.primaryAction]. */
-    fun primaryAction(state: String) = GatePolicy.primaryAction(state)
+    /**
+     * When this app last published a gate command, on [System.currentTimeMillis]; 0 until it
+     * has. Read by
+     * [StateChangeAnnouncer][pl.bitforge.domofon.domain.StateChangeAnnouncer] to tell a state
+     * change the user caused from one they need telling about.
+     *
+     * A plain volatile read rather than a flow, deliberately. A second flow would be
+     * collected on the same scope as `gateState` with no ordering guarantee between them, so
+     * a fast gate could publish its state change before the collector had seen the command
+     * that caused it — and the notification this exists to suppress would fire anyway. A
+     * value the announcer reads at decision time cannot race.
+     */
+    @Volatile
+    var lastCommandAtMs: Long = 0L
+        private set
 
     /** Fire-and-forget, for UI callers that already hold a lease. */
     fun sendCommand(action: String) {
@@ -399,6 +412,12 @@ class GateService(
             Log.w(TAG, "unknown action: $action")
             return false
         }
+
+        // Stamped on intent, not on success. A command that fails to send still means the
+        // user tapped a button, and the state change that follows — from the gate moving for
+        // some other reason, or from a retry landing — is still not news to them. Stamping
+        // after the publish would also be too late for a gate that answers quickly.
+        lastCommandAtMs = System.currentTimeMillis()
 
         acquire("command").use {
             // One budget for the whole operation, not one per stage. Two sequential 8 s

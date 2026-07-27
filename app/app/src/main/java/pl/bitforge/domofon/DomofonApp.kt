@@ -17,10 +17,6 @@ class DomofonApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Exactly one process-wide state-change collector — the per-surface observers it
-        // replaces double-posted every notification when phone and car were both open.
-        container.gateEventNotifier.start()
-
         val nm = getSystemService(NotificationManager::class.java)
 
         // IMPORTANCE_HIGH is what makes a notification a heads-up one — on the phone and,
@@ -29,6 +25,14 @@ class DomofonApp : Application() {
             NotificationChannel(CHANNEL_EVENTS, "Gate events", NotificationManager.IMPORTANCE_HIGH)
                 .apply { description = "Gate state changes" }
         )
+
+        // After the channel, not before: this starts the collector that posts into it. The
+        // ordering was inverted, and only survived because the collector runs on a background
+        // dispatcher and the channel is created microseconds later.
+        //
+        // Exactly one process-wide state-change collector — the per-surface observers it
+        // replaces double-posted every notification when phone and car were both open.
+        container.gateEventNotifier.start()
 
         // The "Gate watcher" channel was reserved for a foreground service that was never
         // built (Play dropped geofencing as a location-FGS use case; the sketch is a
