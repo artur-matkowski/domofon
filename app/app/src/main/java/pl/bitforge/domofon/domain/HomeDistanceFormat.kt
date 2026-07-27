@@ -16,8 +16,18 @@ import kotlin.math.roundToInt
  *
  * @param meters distance from the home geofence centre, or null when unavailable.
  * @param radiusMeters the geofence radius the zone bands derive from.
+ * @param nextFixInMs when the app will look again, or null to say nothing about it. Only
+ *   supplied when the in-app fence is switched on, because only then is the cadence a fact
+ *   about the *arrival trigger* rather than about a readout nobody asked to be live. It is
+ *   the app's own polling interval and says nothing about the Play Services fence, which
+ *   evaluates on a schedule the app cannot observe — see
+ *   [GeofenceStatus].
  */
-fun formatHomeDistance(meters: Float?, radiusMeters: Float): String {
+fun formatHomeDistance(
+    meters: Float?,
+    radiusMeters: Float,
+    nextFixInMs: Long? = null,
+): String {
     if (meters == null) return ""
     val zone = when {
         meters < radiusMeters * 0.5f -> "at home"
@@ -29,5 +39,15 @@ fun formatHomeDistance(meters: Float?, radiusMeters: Float): String {
     } else {
         String.format(Locale.US, "%.1f km", meters / 1000f)
     }
-    return "$range · $zone"
+    val cadence = nextFixInMs?.let { " · next ≤${formatCadence(it)}" }.orEmpty()
+    return "$range · $zone$cadence"
+}
+
+/**
+ * The poll interval, short enough to sit on a car row. "≤" because it is an upper bound: the
+ * loop may be woken sooner and a fix may take a moment longer.
+ */
+private fun formatCadence(ms: Long): String {
+    val seconds = ms / 1000
+    return if (seconds < 60) "${seconds}s" else "${(seconds + 30) / 60}min"
 }

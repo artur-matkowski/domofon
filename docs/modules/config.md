@@ -48,8 +48,11 @@ which path it is on. It is `null` when the selected path's URL is blank, which i
 
 1. **`ConfigKeys` strings must equal the `android:key` attributes in
    `res/xml/preferences.xml` — there is no compile-time check across that boundary.**
-   Change one, change both. (`status.connection` and `about.version` in the XML are
-   UI-only rows, not config keys.)
+   Change one, change both. (`status.connection`, `status.geofence` and `about.version` in
+   the XML are UI-only rows, not config keys — `status.geofence` is `persistent="false"` and
+   its summary is filled from `GeofenceStatusStore`, which is a *separate* prefs file: it is
+   observed state, not settings, and routing it through here would emit on `config` every
+   time the fence re-registered.)
 2. **All validation lives in the parser, on read.** Clamps (QoS 0–2, keepAlive 0–65535,
    snapshot 1–300 s), numeric-string parsing (EditTextPreference stores strings), trims
    (a soft-keyboard trailing space is invisible in the row and rejected by the broker),
@@ -66,6 +69,11 @@ which path it is on. It is `null` when the selected path's URL is blank, which i
    the device ([dead ends](../architecture/decisions.md#recorded-dead-ends)).
 6. **`home.isUsable` treats null-island (0,0) as unset** — it is what a half-filled form
    produces, and a geofence there would silently never fire.
+   `home.inAppFence` is the opt-in second arrival trigger
+   ([D13](../architecture/decisions.md)); it defaults **off**, depends on `home.enabled` in
+   the XML, and needs no permission of its own — it reuses the coordinates and the grant the
+   geofence already required. It is deliberately *not* part of `isUsable`: it changes which
+   triggers run, never whether there is a usable home position.
 7. **`SecretStore.key()` is synchronized and must stay so**: two threads racing first-run
    key generation both call `generateKey()`, the second silently *overwrites* the entry,
    and whatever the first encrypted fails its GCM tag forever.

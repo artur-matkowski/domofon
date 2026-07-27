@@ -88,7 +88,14 @@ class GateViewModel(
             lastError = backend.lastError,
             primaryAction = GatePolicy.primaryAction(state),
             gateState = state,
-            homeDistance = formatHomeDistance(reading?.meters, backend.config.home.radiusMeters),
+            homeDistance = formatHomeDistance(
+                meters = reading?.meters,
+                radiusMeters = backend.config.home.radiusMeters,
+                // Only when the in-app fence is on: then the cadence says how sharp the
+                // trigger is and is worth the width. With it off it is trivia about a
+                // readout, and the car row has two text lines to spend.
+                nextFixInMs = reading?.nextFixInMs?.takeIf { backend.config.home.inAppFence },
+            ),
             cameraConfigured = backend.config.camera.hasPicture,
             cameraStatus = camera.frames,
             audioNotice = GatePolicy.cameraAudioNotice(camera.audio),

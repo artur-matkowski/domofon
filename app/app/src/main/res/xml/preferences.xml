@@ -154,6 +154,26 @@
             app:summary="@string/pref_radius_summary"
             app:dependency="home.enabled"/>
 
+        <!-- The second, opt-in arrival trigger. Needs no permission of its own — it reuses
+             the coordinates and the "Allow all the time" grant home.enabled already
+             required, which is exactly why it depends on it. -->
+        <SwitchPreferenceCompat
+            app:key="home.inAppFence"
+            app:title="@string/pref_inapp_fence"
+            app:summary="@string/pref_inapp_fence_summary"
+            app:dependency="home.enabled"/>
+
+        <!-- Holds no value: SettingsFragment fills the summary from GeofenceStatusStore.
+             This is the answer to "it didn't fire and I have no idea why" — whether the
+             fence is armed at all, whether Play Services has ever delivered, and whether a
+             pop-up was posted. -->
+        <Preference
+            app:key="status.geofence"
+            app:title="@string/pref_geofence_status"
+            app:dependency="home.enabled"
+            app:persistent="false"
+            app:selectable="false"/>
+
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/pref_cat_camera">

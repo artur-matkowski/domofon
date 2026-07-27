@@ -21,6 +21,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.domain.HomeFenceCrossing
 import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -53,12 +54,27 @@ class HomeDistanceTracker(
     private val context: Context,
     private val configStore: ConfigStore,
     private val geofence: GeofenceManager,
+    private val status: GeofenceStatusStore,
     /** Parent of every polling scope this creates — container shutdown stops them all. */
     private val appScope: CoroutineScope,
+    /**
+     * Called when these readings cross the fence inward and the in-app fence is switched on.
+     * Wired to `ArrivalFlow` by the container; a parameter rather than a direct call so this
+     * class keeps knowing nothing about MQTT or notifications.
+     */
+    private val onArrival: () -> Unit = {},
 ) {
 
-    /** Metres from the home geofence centre. A null [distance] value means "unavailable". */
-    data class Reading(val meters: Float)
+    /**
+     * Metres from the home geofence centre. A null [distance] value means "unavailable".
+     *
+     * [nextFixInMs] is how long this loop intends to wait before looking again. It is on the
+     * reading because the car screen shows it: with the in-app fence on, a driver wants to
+     * know the readout is still alive and roughly how sharp it is. Note what it is *not* —
+     * it says nothing about the Play Services fence, whose evaluation schedule the app can
+     * neither see nor set.
+     */
+    data class Reading(val meters: Float, val nextFixInMs: Long)
 
     private val _distance = MutableStateFlow<Reading?>(null)
 
@@ -72,6 +88,10 @@ class HomeDistanceTracker(
 
     /** Non-null exactly while the loop is running. Guards the repeatable start/stop. */
     private var scope: CoroutineScope? = null
+
+    /** The in-app fence, rebuilt whenever the radius changes under it. Null = not armed. */
+    private var crossing: HomeFenceCrossing? = null
+    private var crossingRadius = 0f
 
     /**
      * Begin producing readings. No-op if already running, or if the feature is off / the
@@ -103,6 +123,33 @@ class HomeDistanceTracker(
     fun stop() {
         scope?.cancel()
         scope = null
+        // The readings are about to stop being continuous. Forgetting which side of the
+        // fence we were on is what stops a tracker stopped outside and restarted inside from
+        // reporting an arrival nothing observed.
+        crossing?.reset()
+    }
+
+    /**
+     * The fence to test this reading against, rebuilt if the user changed the radius.
+     *
+     * A radius edit moves the boundary, so which side we were on last time is no longer a
+     * comparable answer — a fresh fence re-establishes it from the next reading instead.
+     */
+    @Synchronized
+    private fun fenceFor(radiusMeters: Float): HomeFenceCrossing {
+        val existing = crossing
+        if (existing != null && crossingRadius == radiusMeters) return existing
+        return HomeFenceCrossing(radiusMeters).also {
+            crossing = it
+            crossingRadius = radiusMeters
+        }
+    }
+
+    /** The in-app fence is off, or unusable. Forget the side rather than keep a stale one. */
+    @Synchronized
+    private fun disarmFence() {
+        crossing = null
+        crossingRadius = 0f
     }
 
     private suspend fun loop() {
@@ -127,9 +174,22 @@ class HomeDistanceTracker(
                 longitude = home.longitude!!
             }
             val meters = fix.distanceTo(homeLoc)
-            _distance.value = Reading(meters)
-
             val next = nextDelayMs(meters, fix)
+            _distance.value = Reading(meters, next)
+
+            // The opt-in in-app fence, evaluated on the same readings that feed the readout.
+            // Beside the Play Services fence, never instead of it: this one only runs while a
+            // surface is alive, but it is the only one whose evaluation the app can observe.
+            if (home.inAppFence) {
+                if (fenceFor(home.radiusMeters).onReading(meters)) {
+                    Log.i(TAG, "in-app fence: crossed inward")
+                    status.recordInAppCrossing()
+                    onArrival()
+                }
+            } else {
+                disarmFence()
+            }
+
             // Distance and cadence only — never the coordinates. metres-from-home is what is
             // already on screen; the home position is not.
             Log.i(TAG, "distance ${meters.roundToInt()} m, next fix in ${next / 1000} s")

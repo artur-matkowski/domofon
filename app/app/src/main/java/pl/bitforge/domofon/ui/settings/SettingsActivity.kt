@@ -34,6 +34,9 @@ import pl.bitforge.domofon.data.mqtt.ConnectionLease
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.ConnectionState
 import pl.bitforge.domofon.domain.ConnectionStatus
+import pl.bitforge.domofon.domain.formatGeofenceStatus
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * The settings screen. Everything the app needs to reach a gate is entered here and
@@ -119,7 +122,15 @@ class SettingsActivity : AppCompatActivity() {
             .setPositiveButton(R.string.location_rationale_continue) { _, _ ->
                 if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) requestBackground()
                 else requestPermissions(
-                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                    // Both, together. Asking for FINE alone still shows the Android 12+
+                    // Precise/Approximate dialog, and a user who taps Approximate leaves FINE
+                    // *denied* — after which GeofenceManager.hasPermissions is false and the
+                    // fence is never registered, silently and permanently. Requesting the
+                    // pair is Google's own guidance and is what makes Precise selectable.
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                    ),
                     REQ_FOREGROUND,
                 )
             }
@@ -143,28 +154,38 @@ class SettingsActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
-            REQ_FOREGROUND -> requestBackground()
+            // "Approximate" satisfies the dialog and not the geofence. Say so, rather than
+            // letting requestBackground() return early into silence — which is how this
+            // failure used to end.
+            REQ_FOREGROUND ->
+                if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) requestBackground()
+                else offerAppSettings(R.string.location_needs_precise)
+
             REQ_BACKGROUND ->
                 if (granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
                     container.geofenceManager.sync(this)
                 } else {
                     // Android 11+ will not grant "Allow all the time" from a dialog at all;
-                    // system Settings is the only place it can be turned on. Offer it —
-                    // never launch it unasked.
-                    AlertDialog.Builder(this)
-                        .setMessage(R.string.location_needs_all_the_time)
-                        .setNegativeButton(R.string.location_rationale_cancel, null)
-                        .setPositiveButton(R.string.location_rationale_continue) { _, _ ->
-                            startActivity(
-                                Intent(
-                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                    Uri.fromParts("package", packageName, null),
-                                )
-                            )
-                        }
-                        .show()
+                    // system Settings is the only place it can be turned on.
+                    offerAppSettings(R.string.location_needs_all_the_time)
                 }
         }
+    }
+
+    /** Offer the system app-settings screen — never launch it unasked. */
+    private fun offerAppSettings(message: Int) {
+        AlertDialog.Builder(this)
+            .setMessage(message)
+            .setNegativeButton(R.string.location_rationale_cancel, null)
+            .setPositiveButton(R.string.location_rationale_continue) { _, _ ->
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", packageName, null),
+                    )
+                )
+            }
+            .show()
     }
 
     private companion object {
@@ -243,7 +264,37 @@ class SettingsActivity : AppCompatActivity() {
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
             super.onViewCreated(view, savedInstanceState)
             connectionStatusRow()
+            geofenceStatusRow()
             versionRow()
+        }
+
+        /**
+         * What the app knows about its own arrival trigger, in prose.
+         *
+         * The reason this row exists: a geofence that never fires is indistinguishable, from
+         * the outside, from one that was never registered and from one that fired into a
+         * dropped pop-up. Those have three different fixes and used to produce one symptom.
+         * [pl.bitforge.domofon.data.location.GeofenceStatusStore] is not a flow — it is
+         * written by receivers in other processes — so this re-reads whenever the screen
+         * starts, which is the only moment anyone is looking at it.
+         */
+        private fun geofenceStatusRow() {
+            val row = findPreference<Preference>(KEY_GEOFENCE_STATUS) ?: return
+            val format = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    // A StateFlow, so this renders once immediately and again whenever the
+                    // in-app fence switch is toggled — which changes what there is to report.
+                    requireContext().container.configStore.config.collect { config ->
+                        val container = requireContext().container
+                        row.summary = formatGeofenceStatus(
+                            status = container.geofenceStatus.current,
+                            inAppFenceOn = config.home.inAppFence,
+                            stamp = { format.format(Date(it)) },
+                        )
+                    }
+                }
+            }
         }
 
         /**
@@ -374,6 +425,7 @@ class SettingsActivity : AppCompatActivity() {
 
             /** Matches the app:key in preferences.xml; holds no value, so not a ConfigStore key. */
             const val KEY_STATUS = "status.connection"
+            const val KEY_GEOFENCE_STATUS = "status.geofence"
             const val KEY_VERSION = "about.version"
         }
     }

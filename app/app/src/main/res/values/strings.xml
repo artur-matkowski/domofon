@@ -47,6 +47,9 @@
     <string name="pref_longitude">Longitude</string>
     <string name="pref_radius">Radius (metres)</string>
     <string name="pref_radius_summary">How far from home the notification appears. Below about 150 m it becomes unreliable.</string>
+    <string name="pref_inapp_fence">Also watch from inside the app</string>
+    <string name="pref_inapp_fence_summary">Runs a second arrival check alongside Android\'s, using the app\'s own position readings. Only works while the app or the car screen is running — but unlike Android\'s, it reports what it is doing. Turn this on if arrival notifications are not appearing.</string>
+    <string name="pref_geofence_status">Arrival trigger status</string>
 
     <!-- Camera -->
     <string name="pref_cat_camera">Camera</string>
@@ -81,5 +84,6 @@
     <string name="location_rationale_continue">Continue</string>
     <string name="location_rationale_cancel">Not now</string>
     <string name="location_needs_all_the_time">Choose “Allow all the time” so the gate can pop up as you arrive</string>
+    <string name="location_needs_precise">Arrival detection needs <b>precise</b> location. “Approximate” is not accurate enough to tell when you cross the boundary, so the check would never run.</string>
     <string name="qt_ui_needs_restart">The gate screen could not start.\n\nClose Domofon from the recent-apps list and open it again.</string>
 </resources>

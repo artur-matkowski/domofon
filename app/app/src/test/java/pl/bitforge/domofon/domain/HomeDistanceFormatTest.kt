@@ -37,4 +37,42 @@ class HomeDistanceFormatTest {
         // Locale.US is pinned in the formatter; a comma here would desync phone and car.
         assertEquals("1.1 km · approaching home", formatHomeDistance(1_100f, radius))
     }
+
+    // --- the in-app fence's evaluation cadence ---------------------------------------
+
+    @Test
+    fun `no cadence is appended unless one is supplied`() {
+        assertEquals("1.5 km · approaching home", formatHomeDistance(1_540f, radius, null))
+    }
+
+    @Test
+    fun `cadence under a minute reads in seconds`() {
+        assertEquals(
+            "1.5 km · approaching home · next ≤20s",
+            formatHomeDistance(1_540f, radius, 20_000),
+        )
+        // The tracker's floor. Seen constantly while driving toward home.
+        assertEquals(
+            "1.5 km · approaching home · next ≤10s",
+            formatHomeDistance(1_540f, radius, 10_000),
+        )
+    }
+
+    @Test
+    fun `cadence of a minute or more reads in minutes`() {
+        assertEquals(
+            "12.3 km · away from home · next ≤2min",
+            formatHomeDistance(12_345f, radius, 120_000),
+        )
+        // The tracker's ceiling, parked far from home.
+        assertEquals(
+            "12.3 km · away from home · next ≤10min",
+            formatHomeDistance(12_345f, radius, 600_000),
+        )
+    }
+
+    @Test
+    fun `a null distance stays hidden even with a cadence`() {
+        assertEquals("", formatHomeDistance(null, radius, 10_000))
+    }
 }

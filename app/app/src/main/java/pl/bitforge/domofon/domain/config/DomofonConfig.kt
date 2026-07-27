@@ -100,6 +100,21 @@ data class DomofonConfig(
         val latitude: Double?,
         val longitude: Double?,
         val radiusMeters: Float,
+        /**
+         * Also watch the fence from inside the app, beside the Play Services one.
+         *
+         * Off by default, and never a replacement: the native fence is the only one that
+         * works with the app dead, which is the normal case for a phone in a pocket. This
+         * one only evaluates while a surface or a car session is alive, but it evaluates
+         * *observably* — the app can say when it last looked and how far away it was, which
+         * the native fence cannot ([GeofenceStatus][pl.bitforge.domofon.domain.GeofenceStatus]).
+         * Added after a 10 km round trip produced no pop-up and nothing could say why.
+         *
+         * Costs no new permission: it reads the same coordinates and rides the same "Allow
+         * all the time" grant the geofence already required, which is why it hangs off
+         * [enabled] in the settings screen.
+         */
+        val inAppFence: Boolean = false,
     ) {
         /**
          * 0,0 is in the Atlantic. It is also what a half-filled settings form produces,
@@ -115,7 +130,8 @@ data class DomofonConfig(
 
         /** The coordinates are the user's home address; they do not belong in logcat. */
         override fun toString(): String =
-            "Home(enabled=$enabled, set=${latitude != null && longitude != null}, r=$radiusMeters)"
+            "Home(enabled=$enabled, set=${latitude != null && longitude != null}, " +
+                "r=$radiusMeters, inApp=$inAppFence)"
     }
 
     /**

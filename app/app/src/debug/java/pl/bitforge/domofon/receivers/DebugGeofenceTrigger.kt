@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import pl.bitforge.domofon.domain.GeofenceStatus
 
 /**
  * Debug-only: exercises the arrival pop-up without driving 2 km out and back.
@@ -25,6 +26,9 @@ class DebugGeofenceTrigger : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Log.i("Domofon", "debug geofence trigger")
         val pending = goAsync()
-        ArrivalFlow.run(context.applicationContext) { pending.finish() }
+        // Claims to be the native fence, because that is what it stands in for — including
+        // going through the same arrival cooldown, so firing this twice in quick succession
+        // reproduces the real de-duplication rather than bypassing it.
+        ArrivalFlow.run(context.applicationContext, GeofenceStatus.SOURCE_NATIVE) { pending.finish() }
     }
 }

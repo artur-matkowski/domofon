@@ -30,6 +30,9 @@ object ConfigKeys {
     const val LON = "home.longitude"
     const val RADIUS = "home.radiusMeters"
 
+    /** The opt-in in-app fence that runs *beside* the Play Services one — see [Home.inAppFence]. */
+    const val IN_APP_FENCE = "home.inAppFence"
+
     const val SOURCE = "camera.source"
     const val SNAPSHOT_URL = "camera.snapshotUrl"
     const val RTSP_URL = "camera.rtspUrl"
@@ -106,6 +109,7 @@ object DomofonConfigParser {
                 longitude = prefs.string(ConfigKeys.LON)?.toDoubleOrNull(),
                 radiusMeters = prefs.string(ConfigKeys.RADIUS)?.toFloatOrNull()
                     ?: DomofonConfig.Defaults.RADIUS_M,
+                inAppFence = prefs.boolean(ConfigKeys.IN_APP_FENCE, false),
             ),
             camera = DomofonConfig.Camera(
                 // Unrecognised values fall back to RTSP rather than throwing: this is the

@@ -22,8 +22,17 @@
         tools:node="remove"/>
 
     <!-- Geofencing (ch. 08). BACKGROUND is not optional: without "Allow all the time" the
-         geofence registers happily and then never fires. -->
+         geofence registers happily and then never fires.
+
+         COARSE is declared even though the fence needs FINE, and must stay declared. On
+         Android 12+ the runtime dialog offers Precise/Approximate whenever an app *could*
+         want either; requesting FINE alone lets the user grant Approximate, which leaves
+         FINE denied. GeofenceManager.hasPermissions then returns false and the fence is
+         never registered — silently, and for good, since nothing asks again. Declaring both
+         and requesting both together is Google's own guidance and is what makes "Precise"
+         a choice the user actually sees. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
@@ -96,9 +105,14 @@
 
         <receiver android:name=".receivers.GeofenceReceiver" android:exported="false"/>
 
+        <!-- MY_PACKAGE_REPLACED alongside BOOT_COMPLETED: an app update drops registered
+             geofences on many OEMs, and without this the only thing that restores them is
+             someone opening MainActivity. Delivered to the updated app only, so no data
+             filter is needed. -->
         <receiver android:name=".receivers.BootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
     </application>

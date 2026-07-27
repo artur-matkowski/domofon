@@ -8,10 +8,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.GeofenceStatusCodes
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.domain.FenceSync
 import pl.bitforge.domofon.receivers.GeofenceReceiver
 
 /**
@@ -22,8 +25,21 @@ import pl.bitforge.domofon.receivers.GeofenceReceiver
  * permission the app asks for, and grabbing it before the user has asked for the feature
  * is both rude and the single most common reason Play rejects a location declaration.
  */
-class GeofenceManager(private val configStore: ConfigStore) {
+class GeofenceManager(
+    private val configStore: ConfigStore,
+    private val status: GeofenceStatusStore,
+) {
 
+    /**
+     * Note this requires **precise** location, not merely some location.
+     *
+     * That is a real trap on Android 12+, where the runtime dialog offers "Precise" and
+     * "Approximate" as a choice: a user who picks Approximate leaves `ACCESS_FINE_LOCATION`
+     * *denied*, this returns false, and [sync] then refuses to register — permanently, and
+     * until this change, with nothing but a log line to say so. The fix is on the requesting
+     * side (ask for COARSE alongside FINE so the dialog behaves), plus the status this now
+     * records so the refusal is visible in Settings.
+     */
     fun hasPermissions(context: Context): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         val background =
@@ -44,13 +60,18 @@ class GeofenceManager(private val configStore: ConfigStore) {
             // Covers both "switched off" and "half-filled form": turning the feature off
             // has to actually stop the tracking, not just stop reacting to it.
             Log.i(TAG, "geofence not active: disabled or no home position set")
+            status.recordSync(FenceSync.NO_POSITION)
             remove(context)
             return
         }
         if (!hasPermissions(context)) {
             // Without "Allow all the time" the geofence is accepted and then never fires —
             // the #1 geofence bug (docs/modules/geo.md). Refuse loudly instead.
+            //
+            // "Loudly" used to mean a log line, which is inaudible to anyone not holding a
+            // cable. It is recorded now, so the settings screen can say so.
             Log.w(TAG, "geofence NOT registered: background location not granted")
+            status.recordSync(FenceSync.NO_PERMISSION)
             return
         }
 
@@ -59,7 +80,12 @@ class GeofenceManager(private val configStore: ConfigStore) {
             .setCircularRegion(home.latitude!!, home.longitude!!, home.radiusMeters)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
             .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
-            .setNotificationResponsiveness(30_000) // fresh enough at 2 km, battery-cheap
+            // 0 = "tell me as soon as you know". This was 30 s, which sounded battery-cheap
+            // and is most of a kilometre at road speed — on a 2 km fence that is a large
+            // fraction of the warning the pop-up exists to give. The value is only a *hint*
+            // to Play Services either way; it can be slower than asked and there is no way
+            // to read back what it actually chose.
+            .setNotificationResponsiveness(0)
             .build()
 
         val request = GeofencingRequest.Builder()
@@ -73,9 +99,32 @@ class GeofenceManager(private val configStore: ConfigStore) {
         LocationServices.getGeofencingClient(context)
             .addGeofences(request, pendingIntent(context))
             // Radius only, never the coordinates — that is the user's home address, and
-            // logcat is readable by adb and by anything holding READ_LOGS.
-            .addOnSuccessListener { Log.i(TAG, "geofence registered (r=${home.radiusMeters}m)") }
-            .addOnFailureListener { Log.e(TAG, "geofence registration failed", it) }
+            // logcat is readable by adb and by anything holding READ_LOGS. The recorded
+            // status follows the same rule: timestamps and status codes, nothing positional.
+            .addOnSuccessListener {
+                Log.i(TAG, "geofence registered (r=${home.radiusMeters}m)")
+                status.recordSync(FenceSync.REGISTERED)
+            }
+            .addOnFailureListener {
+                Log.e(TAG, "geofence registration failed", it)
+                // GEOFENCE_NOT_AVAILABLE is the one worth reading back: it means device
+                // location is off or set to battery-saving, which no amount of app-side
+                // correctness fixes.
+                status.recordSync(FenceSync.FAILED, detail = describeFailure(it))
+            }
+    }
+
+    /**
+     * The Play Services failure, short enough for a settings row.
+     *
+     * [ApiException.statusCode] carries the `GeofenceStatusCodes` value; its own
+     * `getStatusCodeString` names it ("GEOFENCE_NOT_AVAILABLE", "GEOFENCE_TOO_MANY_GEOFENCES"),
+     * which is exactly the string worth showing. Anything else falls back to the message,
+     * which never contains a position.
+     */
+    private fun describeFailure(error: Exception): String = when (error) {
+        is ApiException -> GeofenceStatusCodes.getStatusCodeString(error.statusCode)
+        else -> error.message ?: error.javaClass.simpleName
     }
 
     fun remove(context: Context) {

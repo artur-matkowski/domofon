@@ -118,6 +118,19 @@ class DomofonConfigParserTest {
     }
 
     @Test
+    fun `the in-app fence is off unless asked for`() {
+        // It is a second arrival trigger, not a default one: the Play Services fence stays
+        // primary, and this only evaluates while a surface is alive.
+        assertFalse(parse().home.inAppFence)
+        assertFalse(parse(booleans = mapOf(ConfigKeys.GEOFENCE to true)).home.inAppFence)
+
+        val on = parse(
+            booleans = mapOf(ConfigKeys.GEOFENCE to true, ConfigKeys.IN_APP_FENCE to true),
+        )
+        assertTrue(on.home.inAppFence)
+    }
+
+    @Test
     fun `wire equality is what drives a connection rebuild`() {
         val base = parse(strings = mapOf(ConfigKeys.HOST to "broker.local"))
         val topicEdit = parse(

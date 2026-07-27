@@ -75,10 +75,26 @@ class GateViewModelTest {
             home = completeConfig.home.copy(radiusMeters = 2_000f),
         )
         val vm = viewModel(gate())
-        distance.value = HomeDistanceTracker.Reading(1_540f)
+        distance.value = HomeDistanceTracker.Reading(1_540f, nextFixInMs = 20_000)
         runCurrent()
 
+        // No cadence: with the in-app fence off, the poll interval is trivia about a readout
+        // rather than a fact about the arrival trigger.
         assertEquals("1.5 km · approaching home", vm.uiState.value.homeDistance)
+    }
+
+    @Test
+    fun `the in-app fence adds its evaluation cadence to the distance line`() = runTest {
+        config.value = completeConfig.copy(
+            home = completeConfig.home.copy(radiusMeters = 2_000f, inAppFence = true),
+        )
+        val vm = viewModel(gate())
+        distance.value = HomeDistanceTracker.Reading(1_540f, nextFixInMs = 20_000)
+        runCurrent()
+
+        // This is what the car row reports: the app's own trigger is alive and how sharp it
+        // is. It says nothing about the Play Services fence, which cannot be observed.
+        assertEquals("1.5 km · approaching home · next ≤20s", vm.uiState.value.homeDistance)
     }
 
     @Test

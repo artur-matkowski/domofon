@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import pl.bitforge.domofon.container
 import pl.bitforge.domofon.data.location.GeofenceManager
+import pl.bitforge.domofon.domain.GeofenceStatus
+import pl.bitforge.domofon.domain.mayAnnounceArrival
 
 /**
  * Entering the home fence surfaces the gate on the car screen.
@@ -24,35 +26,55 @@ import pl.bitforge.domofon.data.location.GeofenceManager
  * in `src/debug`, because `GeofencingEvent` authenticates nothing: any app able to reach
  * this receiver could forge an ENTER and choose the moment a live "Open gate" button
  * appears in front of a driver.
+ *
+ * Every way out of here now leaves a trace in
+ * [GeofenceStatusStore][pl.bitforge.domofon.data.location.GeofenceStatusStore]. A delivery
+ * that arrives and is discarded used to look exactly like one that never arrived, and those
+ * two have completely different fixes.
  */
 class GeofenceReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
+        val status = app.container.geofenceStatus
 
         // Re-check the setting on every delivery: a fence registered before the user
         // switched the feature off can still be in flight inside Play Services.
         if (!app.container.configStore.current.home.isUsable) {
             Log.i(TAG, "geofence event ignored: feature disabled")
+            status.recordRejection("feature disabled")
             return
         }
 
-        val event = GeofencingEvent.fromIntent(intent) ?: return
-        if (event.hasError()) {
-            Log.w(TAG, "geofence event error: ${event.errorCode}")
+        val event = GeofencingEvent.fromIntent(intent)
+        if (event == null) {
+            status.recordRejection("unparseable event")
             return
         }
-        if (event.geofenceTransition != Geofence.GEOFENCE_TRANSITION_ENTER) return
+        if (event.hasError()) {
+            Log.w(TAG, "geofence event error: ${event.errorCode}")
+            status.recordRejection("error ${event.errorCode}")
+            return
+        }
+        if (event.geofenceTransition != Geofence.GEOFENCE_TRANSITION_ENTER) {
+            status.recordRejection("transition ${event.geofenceTransition}")
+            return
+        }
 
         // Confirm this is *our* fence rather than trusting whatever the extras claim.
         if (event.triggeringGeofences.orEmpty().none { it.requestId == GeofenceManager.ID }) {
             Log.w(TAG, "geofence event for an unknown fence — ignored")
+            status.recordRejection("unknown fence id")
             return
         }
 
         Log.i(TAG, "geofence ENTER")
+        // Recorded before the flow runs, and separately from the pop-up: "Play Services
+        // delivered" and "a pop-up appeared" are the two facts that have to be told apart.
+        status.recordNativeEnter()
+
         val pending = goAsync()
-        ArrivalFlow.run(app) { pending.finish() }
+        ArrivalFlow.run(app, GeofenceStatus.SOURCE_NATIVE) { pending.finish() }
     }
 
     private companion object {
@@ -61,10 +83,14 @@ class GeofenceReceiver : BroadcastReceiver() {
 }
 
 /**
- * The arrival pop-up itself, split out so the debug trigger in `src/debug` can drive it.
+ * The arrival pop-up itself, shared by every trigger that can claim an arrival: this
+ * receiver, the debug trigger in `src/debug`, and the opt-in in-app fence in
+ * [HomeDistanceTracker][pl.bitforge.domofon.data.location.HomeDistanceTracker].
  *
  * `goAsync()` is only valid inside a live `onReceive`, so each receiver keeps its own
- * `PendingResult` and hands the teardown in as [finish].
+ * `PendingResult` and hands the teardown in as [finish]. Callers that are not receivers pass
+ * a no-op — the budget still applies, which is no bad thing for a flow that holds an MQTT
+ * lease.
  */
 internal object ArrivalFlow {
 
@@ -75,11 +101,31 @@ internal object ArrivalFlow {
     private const val RECEIVER_BUDGET_MS = 9_500L
     private const val TAG = "Domofon"
 
-    fun run(context: Context, finish: () -> Unit) {
+    /**
+     * @param source which trigger claimed the arrival — [GeofenceStatus.SOURCE_NATIVE] or
+     *   [GeofenceStatus.SOURCE_IN_APP]. Recorded, so a drive can be read afterwards as
+     *   "the native fence never fired and the in-app one carried it", which is the diagnosis
+     *   the failing drive could not produce.
+     */
+    fun run(context: Context, source: String, finish: () -> Unit = {}) {
         // The app-wide scope, not an ad-hoc one — the old CoroutineScope created here was
         // never cancelled. The outer timeout hard-bounds the whole flow inside goAsync's
         // ~10 s budget.
         val container = context.container
+        val status = container.geofenceStatus
+
+        // The two triggers are independent and will often both notice the same approach a
+        // few seconds apart. One announcement per arrival; the guard is persisted because
+        // the native fence delivers into a process that is usually dead, so an in-memory
+        // latch on either side would never see the other's pop-up.
+        val now = System.currentTimeMillis()
+        if (!mayAnnounceArrival(status.current.lastAnnouncedAtMs, now)) {
+            Log.i(TAG, "arrival from $source suppressed: another was announced recently")
+            finish()
+            return
+        }
+        status.recordAnnounced(source, now)
+
         container.appScope.launch {
             try {
                 withTimeoutOrNull(RECEIVER_BUDGET_MS) {
@@ -94,7 +140,7 @@ internal object ArrivalFlow {
                         // pop-up says so rather than not appearing at all — silence looks
                         // identical to a bug.
                         val state = container.gateService.awaitFreshState(STATE_TIMEOUT_MS)
-                        Log.i(TAG, "geofence pop-up with state=${state?.state ?: "unknown"}")
+                        Log.i(TAG, "arrival pop-up ($source) with state=${state?.state ?: "unknown"}")
                         container.gateNotifier.notifyApproaching(context, state)
                     }
                 }

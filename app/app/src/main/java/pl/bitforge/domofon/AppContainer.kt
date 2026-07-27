@@ -14,7 +14,10 @@ import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.data.mqtt.HiveMqTransport
 import pl.bitforge.domofon.ui.notifications.GateNotifier
 import pl.bitforge.domofon.data.location.GeofenceManager
+import pl.bitforge.domofon.data.location.GeofenceStatusStore
 import pl.bitforge.domofon.data.location.HomeDistanceTracker
+import pl.bitforge.domofon.domain.GeofenceStatus
+import pl.bitforge.domofon.receivers.ArrivalFlow
 import pl.bitforge.domofon.ui.notifications.GateEventNotifier
 import pl.bitforge.domofon.ui.shared.GateViewModel
 
@@ -36,6 +39,9 @@ import pl.bitforge.domofon.ui.shared.GateViewModel
  */
 class AppContainer(app: Application) : AutoCloseable {
 
+    /** For the container's own callbacks, which outlive whichever surface created them. */
+    private val appContext: Context = app.applicationContext
+
     /** Parent of every process-lifetime coroutine the container's objects launch. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -49,7 +55,14 @@ class AppContainer(app: Application) : AutoCloseable {
         scope = appScope,
     )
 
-    val geofenceManager = GeofenceManager(configStore)
+    /**
+     * What the app has observed about its own arrival trigger — registration outcome,
+     * deliveries, pop-ups. Persistent, because the native fence delivers into a process that
+     * is usually dead and the arrival cooldown has to survive that.
+     */
+    val geofenceStatus = GeofenceStatusStore(app)
+
+    val geofenceManager = GeofenceManager(configStore, geofenceStatus)
 
     /** Stateless notification renderer; *when* to post is its callers' business. */
     val gateNotifier = GateNotifier()
@@ -80,9 +93,22 @@ class AppContainer(app: Application) : AutoCloseable {
         sessions = CoroutineScope(appScope.coroutineContext + Dispatchers.IO),
     )
 
-    /** A per-surface distance readout; same ownership rule as the grabber. */
+    /**
+     * A per-surface distance readout; same ownership rule as the grabber.
+     *
+     * It also carries the opt-in in-app fence, which is why it is handed an arrival callback:
+     * the tracker owns the readings, [ArrivalFlow] owns what an arrival *does*, and neither
+     * has to know about the other. The callback is inert unless `home.inAppFence` is on.
+     */
     fun newHomeDistanceTracker(context: Context) =
-        HomeDistanceTracker(context.applicationContext, configStore, geofenceManager, appScope)
+        HomeDistanceTracker(
+            context = context.applicationContext,
+            configStore = configStore,
+            geofence = geofenceManager,
+            status = geofenceStatus,
+            appScope = appScope,
+            onArrival = { ArrivalFlow.run(appContext, GeofenceStatus.SOURCE_IN_APP) },
+        )
 
     /** One ViewModel per surface, on that surface's lifecycle scope. */
     fun newGateViewModel(

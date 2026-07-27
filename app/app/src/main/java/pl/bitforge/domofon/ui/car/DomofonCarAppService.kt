@@ -57,10 +57,26 @@ class CarGateSession : Session() {
         // audio setting) — hearing the gate while driving is the point of this on the car.
         val grabber = carContext.container.newCameraGrabber(carContext)
 
-        // Distance to home, started and stopped with the session exactly like the
-        // grabber: a backgrounded car app must not keep pulling location for a screen
-        // nobody is looking at. Silent unless the geofence feature is on and located.
+        // Geofences are Play Services' to keep, and they go away — on reboot, on app update,
+        // on a force-stop. Every *activity* start re-registers them (docs/modules/geo.md
+        // invariant 7), which quietly assumed the phone gets opened. A car-only session never
+        // did, so a user who only ever launches this on the head unit could drive with no
+        // fence at all and nothing would repair it.
+        carContext.container.geofenceManager.sync(carContext.applicationContext)
+
+        // Distance to home. Silent unless the geofence feature is on and located.
         val distanceTracker = carContext.container.newHomeDistanceTracker(carContext)
+
+        // With the in-app fence on, this tracker *is* an arrival trigger, and an arrival
+        // trigger that stops the moment the driver switches to Maps is no trigger at all —
+        // which is the whole of the drive it has to cover. So it follows the session rather
+        // than the screen's visibility in that case. Off, it stays a readout and keeps the
+        // old rule: no location for a screen nobody is looking at.
+        //
+        // The grabber is never included in this. Stills are expensive, cross the VPN, and are
+        // worth nothing to a backgrounded screen; location at 10 s–10 min is not comparable.
+        val fenceFollowsSession = carContext.container.configStore.current.home.inAppFence
+        if (fenceFollowsSession) distanceTracker.start()
 
         // Observer first, then acquire. Registering afterwards leaks the lease for good
         // if the host tears the session down in between — after which the connection is
@@ -72,13 +88,17 @@ class CarGateSession : Session() {
             object : DefaultLifecycleObserver {
                 override fun onStart(owner: LifecycleOwner) {
                     grabber.start()
+                    // start() is a no-op when already running, so this is safe either way.
                     distanceTracker.start()
                 }
                 override fun onStop(owner: LifecycleOwner) {
                     grabber.stop()
-                    distanceTracker.stop()
+                    if (!fenceFollowsSession) distanceTracker.stop()
                 }
                 override fun onDestroy(owner: LifecycleOwner) {
+                    // Unconditional: whatever start()ed it, the session ending is the end of
+                    // it. stop() is idempotent.
+                    distanceTracker.stop()
                     lease?.close()
                     lease = null
                 }
