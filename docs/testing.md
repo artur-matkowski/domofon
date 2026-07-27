@@ -113,27 +113,47 @@ small changes is phone-cold-start + one command + one DHU look.
       abort, no restart loop; screen-off launch recovers via the watchdog
 
 **Car (DHU via `scripts/dhu.sh`)**
-- [ ] Grid (no camera) and pane (camera) templates render; snapshot refresh does **not**
-      dim/blink the head unit
+- [ ] Pane renders with and without a camera (camera-less shows the gate-state picture, and
+      the picture changes with state); snapshot refresh does **not** dim/blink the head unit
+- [ ] **Put the DHU in *driving* mode and leave Domofon in front for several minutes**,
+      across at least six status/distance changes: the screen keeps updating and is **not**
+      closed with "this action is not allowed while driving". This restriction does not
+      apply when parked, so a parked test proves nothing about it.
 - [ ] Both camera sources render on the pane, and audio plays during a car session (this was
       already unproven before the second path existed — see the troubleshooting backlog)
 - [ ] Change the camera source on the phone **while the car session is live** → the pane's
       picture swaps in place, the last frame stays up until the new source delivers, and the
       head unit does not dim
-- [ ] Primary button flips Open⇄Close with state; Stop always present; unconfigured
+- [ ] Primary button flips Open⇄Close with state — **including mid-travel**: `opening` must
+      read "Close gate", `closing` must read "Open gate". Stop always present; unconfigured
       message points at the phone; icons visible on a light host theme
 
 **Notifications**
-- [ ] State change → heads-up on phone and over the DHU; action button sends
+- [ ] Open the phone app, then the car app, then Settings → **no** heads-up from any of them
+- [ ] Move the gate from the wall button → heads-up on phone and over the DHU; action sends
+- [ ] Tap Open in the app → **no** pop-up for `opening`, pop-up for `opened`
 - [ ] Locked phone + requireUnlock → toast refusal; body hidden on the lock screen
 - [ ] Broker unreachable → failure notification after the action
 - [ ] **Exactly one** notification per state change with phone *and* car open
 - [ ] No "Gate watcher" channel remains in the app's notification settings
 
 **Geofence**
-- [ ] `DebugGeofenceTrigger` → arrival pop-up with fresh state within ~7 s
+- [ ] `DebugGeofenceTrigger` → arrival pop-up with fresh state within ~7 s, and Settings →
+      "Arrival trigger status" shows the delivery
+- [ ] Fire it **twice inside 10 minutes** → exactly one pop-up (the shared cooldown)
 - [ ] Broker unreachable → "Gate unreachable — tap to retry", no action button
-- [ ] Reboot → fence re-registered (trigger works without opening the app)
+- [ ] Revoke background location → status reads `NOT registered — needs "Allow all the time"`;
+      re-grant → `Registered <ts>`
+- [ ] Grant **Approximate** rather than Precise → the app says precise location is needed
+      instead of failing silently
+- [ ] Reboot → fence re-registered (trigger works without opening the app); reinstall over
+      the top → still registered (`MY_PACKAGE_REPLACED`)
+- [ ] **The real drive**, in-app fence on: out past the radius and back with the head unit
+      connected. A pop-up on the way in; afterwards, the status row says whether the native
+      fence delivered. Native missing + pop-up present = Play Services is the broken half,
+      which is the diagnosis the failing drive could not produce.
+- [ ] On the car screen during that drive: the distance line ticks down and carries its
+      `next ≤Ns` cadence
 
 **Release build** (mandatory after class moves/renames — R8 + reflective Qt/Netty)
 - [ ] `scripts/build-release.sh --dry-run` artifact side-loaded: the whole phone list above

@@ -140,7 +140,57 @@ AGP9/Qt build could trip over. **Decision:** JUnit4 + kotlinx-coroutines-test on
 (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`); the arrival notification gets exactly
 one because a driver reaching for a heads-up needs one target. **Decision (post-b6f18d5):**
 the divergence is intentional, not drift — phone: Open/Close/Stop; car:
-`GatePolicy.primaryAction` + Stop; notification: primary only. **Status:** active.
+`GatePolicy.primaryAction` + Stop; notification: primary only.
+
+**Amended 2026-07-27.** Two changes, neither touching the shape above.
+
+*The `GridTemplate` is gone; the car is a `PaneTemplate` in every configured state.* The grid
+served the camera-less config and could not be made cheap: its refresh comparison covers the
+template title and each grid item's title, and ours were `"<status> · <distance>"` and
+`"Open gate"`/`"Close gate"`. It is also not a legal *last* template for a task. Camera-less
+installs now get the same pane with the gate state in the image slot. See
+[modules/ui-car.md](../modules/ui-car.md).
+
+*`primaryAction` widened.* It was `state == "opened"`, so every mid-travel state offered
+"Open gate" — an action that does nothing, on the one button the driver has. Now `opened`,
+`opening` and `stuck_opening` offer Close; `closed`, `closing`, `stopped`, `stuck_closing`
+and `unknown` offer Open. `stopped` stays on Open deliberately: halted mid-travel it is
+neither, and Open is the safer default for someone driving up to it.
+
+**Status:** active.
+
+## D13 — Two arrival triggers in parallel: Play Services primary, in-app opt-in
+
+**Context (Artur, live testing 2026-07-27):** a 10 km round trip produced no arrival pop-up,
+and **nothing in the app could say why**. Play Services owns the geofence in its own process:
+it reports no schedule, no liveness and no failure, and `setNotificationResponsiveness` is a
+hint that cannot be read back. So "never registered", "registered but never evaluated" and
+"delivered into a dropped pop-up" produce one identical symptom with three different fixes.
+
+**Decision:** keep the native fence as the primary trigger — it is the only one that works
+with the app dead, which is the normal case — and add a second, **opt-in**, running in
+parallel: `home.inAppFence` evaluates `HomeDistanceTracker`'s own readings against the same
+radius (`domain/HomeFenceCrossing`). It is not a replacement and must never become the
+default.
+
+**Why it is allowed to exist:** it costs no new permission (same coordinates, same "Allow all
+the time" grant, which is why the setting depends on `home.enabled`), and it is *observable* —
+the app can report its last crossing and its next evaluation, which is the diagnostic the
+failing drive could not produce.
+
+**Consequences:** `ArrivalFlow` gains a **persisted** 10-minute cooldown, because the two will
+routinely both notice one approach and the native one delivers into a dead process, so an
+in-memory latch would not see the other's pop-up. With the switch on, the car session runs the
+distance tracker for the whole session rather than only while its screen is visible — it is a
+trigger then, and a trigger that stops when the driver opens Maps covers none of the drive.
+The camera grabber is deliberately *not* included in that widening.
+
+**Accepted unknown:** an Android Auto session is not a foreground service, so whether the OS
+keeps delivering location to a backgrounded projected session is a device question no amount
+of code review settles. If it does not, the in-app fence only fires while Domofon is the
+visible car screen — which is still strictly more than before.
+
+**Status:** active. See [modules/geo.md](../modules/geo.md).
 
 ---
 

@@ -372,9 +372,7 @@ append-only history — entries are never rewritten to match later refactors.
   like the app being switched off and on. (Observed in the Passat, 2026-07-24.)
   **Cause**: that fade is the host's **screen-transition animation**. The Car App Library
   updates a template *in place* only when the new one counts as a **refresh** of the
-  previous one, and for `PaneTemplate` that turns on the rows: same number of rows, same
-  strings. Anything else is a new template — a transition, and a bite out of the host's
-  per-step template quota. `GateScreen` was appending a rotating `- / | \` spinner to the
+  previous one. `GateScreen` was appending a rotating `- / | \` spinner to the
   first row's title on every build (commit `f3547cf`, to stop a *frozen* still), and its row
   count flipped 1↔2 as the error/distance line appeared and disappeared. So every snapshot
   was, by construction, a full template transition.
@@ -383,10 +381,63 @@ append-only history — entries are never rewritten to match later refactors.
   gone. Between snapshots the only difference is the bitmap, which is what the refresh path
   is for. Also `debounce(150 ms)` on the merged invalidate flow, so a snapshot and a distance
   reading landing together no longer push two templates back to back.
+  **Correction (2026-07-27)**: the rule was written up above as "same number of rows, same
+  strings", and that is **wrong** — see the "not allowed while driving" entry below. The
+  compared set is the template title, the row *count*, and each row's *title*; row texts,
+  the image and the actions are free. The 2026-07-24 fix was therefore half right (row count)
+  and half harmful (status in the row title), and the half it got wrong is what closed the
+  app while driving three days later.
   **Watch for the flip side**: this is the exact trade the spinner was making. If the still
   goes back to being *frozen*, the host is not repainting the pane image on a refresh, and
-  the answer is a coarse deliberate change (e.g. a minute-resolution stamp on the row) —
-  blink once a minute, not once a snapshot. Do not go back to a per-snapshot spinner.
+  the answer is a coarse deliberate change (e.g. a minute-resolution stamp on a row *text*
+  line, which is free) — blink once a minute, not once a snapshot. Do not go back to a
+  per-snapshot spinner in the row **title**.
+
+- **Symptom**: on the head unit, after a few minutes of driving, the app is replaced by
+  **"this action is not allowed while driving"** and closes. Switching to navigation and back
+  makes it work again. Never reproduces while parked. (Observed in the Passat, 2026-07-27.)
+  **Cause**: the host's **template quota** — five template pushes per task, after which it
+  "displays an error message to the user before closing the app". A push is free only if it
+  is a *refresh*, and the AndroidX javadoc defines that for `PaneTemplate` as: template title
+  unchanged, row count unchanged, **and each row's title unchanged**. Row `addText(…)` lines,
+  the pane image and the action labels are **not compared**. `GateScreen` had
+  `Row.setTitle(state.statusText)` — the single most volatile value in the single compared
+  slot — so every status change, every reconnect and every `lastError` set-and-expire spent a
+  step. The camera-less `GridTemplate` was worse: its template title was
+  `"<status> · <distance>"` and its first item title flipped `"Open gate"`/`"Close gate"`, so
+  *every* push was a step, and `GridTemplate` is not a legal *last* template for a task
+  either. Backgrounding to Maps and returning fixes it because re-entering from the launcher
+  **resets the quota**; parking lifts the restriction entirely, which is why the DHU never
+  showed it.
+  **Fix** (2026-07-27): constant template title (`app_name`) and constant row title
+  (`"Gate"`); status on text line 1, error-else-distance on text line 2; the gate state moved
+  into the pane *image* on camera-less installs (`ic_gate_state_*`), which is also free.
+  `GridTemplate` deleted — one `PaneTemplate` for every configured state. Every update is now
+  a refresh, so the quota never advances.
+  **Rule of thumb for this screen**: if a value moves, it belongs in a row text, the image, or
+  an action label. Never in a title.
+
+- **Symptom**: opening the Domofon car screen (or the phone app, or Settings) immediately pops
+  a heads-up notification about a gate that has not moved. (Artur, 2026-07-27.)
+  **Cause**: `GateEventNotifier` filtered with `.drop(1)`, which drops one value in the life
+  of the *process* — the initial `unknown`. But `teardown()` resets `gateState` to `unknown`
+  on every disconnect ([gate](modules/gate.md) invariant 4), and the next connection *learns*
+  the real state from the retained `rx` topics. `unknown → closed` is a new value, so
+  acquiring a lease looked exactly like the gate moving. The comment in
+  `modules/ui-notifications.md` claiming `drop(1)` "skips the state a surface connects into"
+  was simply false. Same mechanism made `ArrivalFlow` post notification 1001 about 750 ms
+  before the arrival pop-up 1002 it exists to deliver.
+  **Fix**: `domain/StateChangeAnnouncer` — a transition out of `unknown` is learning, not
+  news; and a command silences the next state change (only the next, consumed by it) so your
+  own tap does not announce the `opening` you caused.
+
+- **Symptom**: `Close gate` never appears while the gate is `opening`; the one button on the
+  car screen and the notification both offer `Open gate`, which does nothing. (Artur,
+  2026-07-27.)
+  **Cause**: `GatePolicy.primaryAction` was `state == "opened"`. Every mid-travel state fell
+  into the else branch.
+  **Fix**: `opened`, `opening` and `stuck_opening` offer Close; the rest offer Open. Free on
+  the car screen — action labels are not part of the template refresh comparison.
 
 - **Measured template limits** (read out of `androidx.car.app:app:1.7.0` itself, so no need
   to re-derive them): a **`Pane` takes at most 2 actions** —
@@ -426,15 +477,41 @@ append-only history — entries are never rewritten to match later refactors.
 
 ## Geofencing
 
-- **Symptom**: geofence never fires. The big three, in order:
-  1. Location permission not **"Allow all the time"**.
-  2. App battery-restricted (needs *Unrestricted*, ch. 06 §4).
-  3. Geofence not re-registered since last reboot (ch. 08 §5).
-  Then: radius < 150 m (too small), phone location accuracy set to battery-saving mode.
+- **Symptom**: geofence never fires. **Start at Settings → "Arrival trigger status"** — since
+  2026-07-27 the app records this and the row tells you which of the three failures you have:
+  | It says | Then |
+  |---|---|
+  | `NOT registered — needs "Allow all the time"` | permission; the row is the fix |
+  | `Registration failed: GEOFENCE_NOT_AVAILABLE` | device location off, or set to battery-saving |
+  | `Registered …` + `no arrival seen yet` | armed and never evaluated — battery restriction (needs *Unrestricted*), or not re-registered since a reboot/update |
+  | `last arrival …` but no pop-up | delivery worked; look at the cooldown or the broker |
+
+  Then: radius < 150 m (too small).
+
+- **Symptom**: the fence was never registered, and Settings says so, but the user is sure they
+  granted location. (2026-07-27.)
+  **Cause**: Android 12+ shows a **Precise / Approximate** choice whenever an app could accept
+  either. Tapping "Approximate" grants `ACCESS_COARSE_LOCATION` and leaves
+  `ACCESS_FINE_LOCATION` *denied* — `GeofenceManager.hasPermissions()` then returns false and
+  `sync()` refuses, permanently, because nothing asks again.
+  **Fix**: declare `ACCESS_COARSE_LOCATION` in the manifest and request it **together with**
+  FINE, which is what makes "Precise" a real choice. Background stays a separate request — a
+  combined foreground+background request is denied outright.
+
+- **Symptom**: nothing repairs the fence for a user who only ever opens the app on the head
+  unit. (2026-07-27.)
+  **Cause**: `sync()` was called from activity starts, Settings and `BOOT_COMPLETED` only. A
+  car session starts no activity, and an app update drops geofences on many OEMs with no boot
+  to follow.
+  **Fix**: `sync()` from `CarGateSession.onCreateScreen`, and `MY_PACKAGE_REPLACED` added to
+  `BootReceiver`.
 
 - **Symptom**: fires very late.
-  **Fix**: larger radius (300–500 m), `setNotificationResponsiveness` lower; accept
-  that geofencing is approximate by design.
+  **Fix**: larger radius (300–500 m); `setNotificationResponsiveness` is 0 since 2026-07-27
+  (it was 30 s, which is most of a kilometre at road speed) — but it is only a *hint* to Play
+  Services, which may be slower and never reports what it actually chose. Accept that
+  geofencing is approximate by design; if it matters, switch on **"Also watch from inside the
+  app"**, whose cadence you can at least see on the car screen.
 
 ## Desktop Head Unit
 
