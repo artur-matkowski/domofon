@@ -178,9 +178,11 @@ the time" grant, which is why the setting depends on `home.enabled`), and it is 
 the app can report its last crossing and its next evaluation, which is the diagnostic the
 failing drive could not produce.
 
-**Consequences:** `ArrivalFlow` gains a **persisted** 10-minute cooldown, because the two will
+**Consequences:** `ArrivalFlow` gains a **persisted** de-duplication guard, because the two will
 routinely both notice one approach and the native one delivers into a dead process, so an
-in-memory latch would not see the other's pop-up. With the switch on, the car session runs the
+in-memory latch would not see the other's pop-up. *(It was a flat 10-minute cooldown until D15
+cut it to a 90-second cross-trigger window — ten minutes did this job and also refused real
+second arrivals.)* With the switch on, the car session runs the
 distance tracker for the whole session rather than only while its screen is visible — it is a
 trigger then, and a trigger that stops when the driver opens Maps covers none of the drive.
 The camera grabber is deliberately *not* included in that widening.
@@ -209,8 +211,8 @@ same id was an *update*, which the car host does not draw a heads-up for.
    arrival notifications only; the command-failure notification stays, because it answers a
    button the user pressed. Full-suppression rather than "post it without the `CarAppExtender`"
    was Artur's call: while driving, a shade entry nobody will read is not worth having.
-2. **Notifications expire** (arrival 5 min, event and failure 10 min) and are cleared when a
-   surface comes to the front. The arrival timeout is under the 10-minute arrival cooldown on
+2. **Notifications expire** (arrival 30 s since D15, event and failure 10 min) and are cleared when a
+   surface comes to the front. The arrival timeout is under the arrival de-duplication window on
    purpose, so the next arrival always lands on an empty id and counts as new. *Not* by
    cancelling before re-posting: `cancel` and `notify` are asynchronous and the notify can be
    swallowed.
@@ -245,6 +247,53 @@ ones is itself an outside→inside crossing.
 
 **Rejected:** gating arrivals on Activity Recognition or a car-connection signal. Both add a
 permission or a dependency in order to second-guess a direction the fence already reports.
+
+**Status:** active, with point 2's numbers superseded by D15. Point 1 (suppress while a surface
+is visible) and point 3 (direction is the trigger) stand unchanged.
+
+## D15 — One pop-up per *crossing*, not one per ten minutes
+
+**Context (Artur, live testing 2026-07-28, same drive as D14).** In the car, head unit
+connected: out past the fence and back in → the pop-up appeared, exactly as intended.
+Then, immediately and in the same session, out past the fence and back in again → **nothing.**
+
+The cause was D13's consequence: `ArrivalFlow` carried a **persisted ten-minute cooldown**, and
+the second crossing landed inside it. The refusal was even recorded honestly —
+`Last event ignored: another pop-up was posted minutes ago` — which is the D13 status model
+working exactly as designed, reporting a rule that was wrong.
+
+The rule, in Artur's words: *a pop-up on the head unit every time the fence is crossed inwards,
+regardless of any other application state, or logic.*
+
+**Decision.** The cooldown never existed to rate-limit arrivals. It had one job — the native
+fence and the in-app fence routinely notice **one** approach a few seconds apart, and the
+native one delivers into a dead process, so nothing in memory can de-duplicate them. Ten
+minutes was roughly twenty times what that job needs, and the surplus ate a real arrival.
+So `arrivalRefusal` now refuses on two grounds, neither of which is "too soon":
+
+1. **The other trigger already announced this crossing** — a *different* `source` within
+   `CROSS_TRIGGER_WINDOW_MS` (90 s). Same source is a different matter: Play Services does not
+   deliver ENTER twice without an EXIT between them, so a second ENTER is a second crossing.
+2. **The last pop-up is still on screen** — within `ARRIVAL_POPUP_TTL_MS` (30 s). This is not a
+   rule about arrivals at all but about notification id 1002: posting onto a live one is an
+   *update*, which the car host draws no heads-up for (D14 point 2). Kept strictly under the
+   window in 1, which is D14 point 2's ordering invariant, restated in the new numbers.
+
+Both constants live in `GeofenceStatus`'s companion, adjacent, and `GateNotifier` reads the TTL
+from there rather than keeping its own. The ordering is asserted in a unit test outright, so
+editing one number alone fails the build rather than the drive.
+
+**Also decided:** the arrival pop-up body carries the crossing time as `HH:mm` — the *detection*
+time, not the moment the notification was built, which can be 9.5 s later. It answers "is this
+the arrival happening now, or one I already ignored?" at a glance, which is the question a
+notification with a 30-second life should never make the driver ask twice.
+
+**Consequences.** An arrival pop-up now lives 30 s instead of 5 min. Event and failure
+notifications (ids 1001/1003) keep their 10 minutes and are untouched, as is the gate
+state-change path. The hardware check "fire the debug trigger twice inside ten minutes →
+exactly one pop-up" **inverts**: two pop-ups is now the correct outcome.
+
+**Status:** active. See [modules/geo.md](../modules/geo.md) invariant 8.
 
 ---
 

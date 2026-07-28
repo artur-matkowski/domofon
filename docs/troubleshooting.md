@@ -439,9 +439,10 @@ append-only history — entries are never rewritten to match later refactors.
   in the shade indefinitely. That is the stale "Approaching home"; and because id 1002 was
   still live, the next `notify(1002, …)` was an **update** of an existing notification rather
   than a new one, which the car host does not draw a heads-up for.
-  **Fix**: `setTimeoutAfter` on all three notifications — arrival 5 min, event and failure
-  10 min — plus `GateNotifier.clearTransient` when a Domofon surface comes to the front. The
-  arrival timeout is deliberately shorter than the 10-minute arrival cooldown, so the id is
+  **Fix**: `setTimeoutAfter` on all three notifications — arrival 30 s (was 5 min; see the
+  cooldown entry below), event and failure 10 min — plus `GateNotifier.clearTransient` when a
+  Domofon surface comes to the front. The arrival timeout is deliberately shorter than the
+  window in which another arrival may be announced, so the id is
   always free by the time another arrival is permitted. **Do not** "fix" this by cancelling
   immediately before re-posting: `cancel` and `notify` are asynchronous and the notify can be
   swallowed, which trades a missing heads-up for a missing notification.
@@ -520,9 +521,29 @@ append-only history — entries are never rewritten to match later refactors.
   | `NOT registered — needs "Allow all the time"` | permission; the row is the fix |
   | `Registration failed: GEOFENCE_NOT_AVAILABLE` | device location off, or set to battery-saving |
   | `Registered …` + `no arrival seen yet` | armed and never evaluated — battery restriction (needs *Unrestricted*), or not re-registered since a reboot/update |
-  | `last arrival …` but no pop-up | delivery worked; look at the cooldown or the broker |
+  | `last arrival …` but no pop-up | delivery worked; read `Last event ignored: …` — it names the guard that dropped it — or suspect the broker |
 
   Then: radius < 150 m (too small).
+
+- **Symptom**: the *second* inward crossing of one drive produces no pop-up. Out past the fence
+  and back → pop-up, as intended; immediately out and back again → nothing, with the head unit
+  connected the whole time. (Artur, live testing 2026-07-28.)
+  **Cause**: `ArrivalFlow`'s guard was a flat **ten-minute cooldown** (`ARRIVAL_COOLDOWN_MS`),
+  and the second crossing landed inside it. Settings said so honestly —
+  `Last event ignored: another pop-up was posted minutes ago` — which is the D13 status model
+  working correctly and reporting a rule that was wrong. The cooldown was never meant to
+  rate-limit arrivals: its one job is collapsing *one* approach noticed by both triggers seconds
+  apart, and ten minutes is roughly twenty times what that needs.
+  **Fix** (D15): `arrivalRefusal` takes the claiming `source` and refuses on two grounds,
+  neither of them "too soon" — a **different** trigger within `CROSS_TRIGGER_WINDOW_MS` (90 s),
+  i.e. the same crossing seen twice; and any repost within `ARRIVAL_POPUP_TTL_MS` (30 s), which
+  is a rule about notification id 1002 rather than about arrivals. Every genuinely separate
+  inward crossing announces, however soon it follows.
+  **If you are tempted to widen either window**, note that the checklist line "fire the debug
+  trigger twice inside ten minutes → exactly one pop-up" was *inverted* by this fix: two pop-ups
+  is the correct outcome now.
+  **Also check** `Last event ignored: a Domofon screen was in front` — that is a different guard
+  (D14 point 1, deliberately kept) and has a different fix.
 
 - **Symptom**: the fence was never registered, and Settings says so, but the user is sure they
   granted location. (2026-07-27.)
@@ -557,8 +578,8 @@ append-only history — entries are never rewritten to match later refactors.
   tracked state inside GMS. **Nothing in the app guards against that, deliberately** — see
   invariant 8 and [D14](architecture/decisions.md). An ENTER *is* a direction; refusing one
   because the app had not separately witnessed the departure drops real arrivals (phone off at
-  home, on again on the way back), which is a far worse bug than one redundant pop-up that the
-  10-minute cooldown already caps.
+  home, on again on the way back), which is a far worse bug than one redundant pop-up that
+  expires by itself in 30 s.
   **Diagnostic, not a gate**: the `Last seen: inside/outside the fence` line says whether Play
   Services delivered the EXIT on the way out. No EXIT and no ENTER on a real round trip means
   the fence is dead, not late.

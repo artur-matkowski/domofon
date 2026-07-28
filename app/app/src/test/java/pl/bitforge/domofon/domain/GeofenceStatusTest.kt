@@ -147,31 +147,88 @@ class GeofenceStatusTest {
         assertFalse(render(GeofenceStatus()).contains("Last seen"))
     }
 
-    // --- the shared arrival cooldown ---------------------------------------------------
+    // --- the shared arrival guard -------------------------------------------------------
+
+    /** The last thing announced, by [by], at [at]. The only state the guard reads. */
+    private fun announced(at: Long, by: String = GeofenceStatus.SOURCE_NATIVE) =
+        GeofenceStatus(lastAnnouncedAtMs = at, lastAnnouncedBy = by)
 
     @Test
     fun `the first arrival is always allowed`() {
-        assertNull(arrivalRefusal(GeofenceStatus(), nowMs = 100_000))
+        assertNull(arrivalRefusal(GeofenceStatus(), GeofenceStatus.SOURCE_NATIVE, nowMs = 100_000))
     }
 
     @Test
     fun `the second trigger noticing the same approach is suppressed`() {
         // The native fence and the in-app fence will routinely both see one arrival, seconds
-        // apart. One pop-up per arrival is the point.
+        // apart. One pop-up per *crossing* is the point.
         val first = 100_000L
-        val status = GeofenceStatus(lastAnnouncedAtMs = first)
-        assertNotNull(arrivalRefusal(status, first + 3_000))
-        assertNotNull(arrivalRefusal(status, first + GeofenceStatus.ARRIVAL_COOLDOWN_MS - 1))
+        val status = announced(first, GeofenceStatus.SOURCE_NATIVE)
+        assertNotNull(arrivalRefusal(status, GeofenceStatus.SOURCE_IN_APP, first + 3_000))
+        assertNotNull(
+            arrivalRefusal(
+                status,
+                GeofenceStatus.SOURCE_IN_APP,
+                first + GeofenceStatus.CROSS_TRIGGER_WINDOW_MS - 1,
+            )
+        )
     }
 
     @Test
-    fun `a genuinely separate arrival is allowed once the cooldown passes`() {
+    fun `a second crossing minutes later still announces`() {
+        // The bug this guard was rewritten for (Artur, live testing 2026-07-28): out past the
+        // fence and back, then straight out and back again in the same drive. The old flat
+        // ten-minute cooldown ate the second pop-up. Same trigger, two crossings, two pop-ups.
         val first = 100_000L
         assertNull(
             arrivalRefusal(
-                GeofenceStatus(lastAnnouncedAtMs = first),
-                first + GeofenceStatus.ARRIVAL_COOLDOWN_MS,
+                announced(first, GeofenceStatus.SOURCE_NATIVE),
+                GeofenceStatus.SOURCE_NATIVE,
+                first + 2 * 60 * 1000,
             )
+        )
+    }
+
+    @Test
+    fun `the other trigger is trusted again once the window passes`() {
+        val first = 100_000L
+        assertNull(
+            arrivalRefusal(
+                announced(first, GeofenceStatus.SOURCE_NATIVE),
+                GeofenceStatus.SOURCE_IN_APP,
+                first + GeofenceStatus.CROSS_TRIGGER_WINDOW_MS,
+            )
+        )
+    }
+
+    @Test
+    fun `nothing is posted onto a pop-up that is still on screen`() {
+        // Not a rule about arrivals — a rule about notification id 1002. A repost onto a live
+        // one is an update, and the car host draws no heads-up for an update.
+        val first = 100_000L
+        val status = announced(first, GeofenceStatus.SOURCE_NATIVE)
+        assertNotNull(
+            arrivalRefusal(
+                status,
+                GeofenceStatus.SOURCE_NATIVE,
+                first + GeofenceStatus.ARRIVAL_POPUP_TTL_MS - 1,
+            )
+        )
+        assertNull(
+            arrivalRefusal(
+                status,
+                GeofenceStatus.SOURCE_NATIVE,
+                first + GeofenceStatus.ARRIVAL_POPUP_TTL_MS,
+            )
+        )
+    }
+
+    @Test
+    fun `the pop-up always expires before another one is permitted`() {
+        // The ordering is the whole reason both constants live in one companion. Edit either
+        // alone and an arrival lands as a silent update instead of a heads-up over Maps.
+        assertTrue(
+            GeofenceStatus.ARRIVAL_POPUP_TTL_MS < GeofenceStatus.CROSS_TRIGGER_WINDOW_MS
         )
     }
 
@@ -184,10 +241,16 @@ class GeofenceStatusTest {
         // of what the readout says.
         val now = 9_000_000L
         for (side in FenceSide.entries) {
-            assertNull(
-                "side=$side",
-                arrivalRefusal(GeofenceStatus(side = side, sideAtMs = now - 60_000), now),
-            )
+            for (source in listOf(GeofenceStatus.SOURCE_NATIVE, GeofenceStatus.SOURCE_IN_APP)) {
+                assertNull(
+                    "side=$side source=$source",
+                    arrivalRefusal(
+                        GeofenceStatus(side = side, sideAtMs = now - 60_000),
+                        source,
+                        now,
+                    ),
+                )
+            }
         }
     }
 }

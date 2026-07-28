@@ -14,7 +14,9 @@ import pl.bitforge.domofon.R
 import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.receivers.GateCommandReceiver
 import pl.bitforge.domofon.domain.GateState
+import pl.bitforge.domofon.domain.GeofenceStatus
 import pl.bitforge.domofon.domain.hourMinute
+import pl.bitforge.domofon.domain.hourMinuteAt
 
 /**
  * Renders gate state into heads-up notifications — a stateless renderer; *when* to post is
@@ -44,19 +46,27 @@ class GateNotifier {
         )
     }
 
-    /** The geofence pop-up: the whole point of the fence. */
-    fun notifyApproaching(context: Context, gs: GateState?) {
+    /**
+     * The geofence pop-up: the whole point of the fence.
+     *
+     * @param atMs when the crossing was *detected*, not when this was called — the arrival
+     *   flow spends up to 9.5 s waiting for fresh gate state in between. Rendered as `HH:mm`
+     *   because a driver glancing at a heads-up should be able to tell this arrival from the
+     *   one twenty minutes ago without remembering which is which.
+     */
+    fun notifyApproaching(context: Context, gs: GateState?, atMs: Long) {
         val state = gs?.state ?: GatePolicy.STATE_UNKNOWN
+        val time = hourMinuteAt(atMs)
         post(
             context = context,
             notifId = NOTIF_ID_GEOFENCE,
             title = "Approaching home — gate: $state",
-            text = if (gs == null) "Gate unreachable — tap to retry" else "Tap to control",
+            text = if (gs == null) "$time · Gate unreachable — tap to retry" else "$time · Tap to control",
             state = state,
             // With no state we do not know which action is right, and offering the wrong
             // one at 60 km/h is worse than offering none.
             withAction = gs != null,
-            timeoutMs = ARRIVAL_TIMEOUT_MS,
+            timeoutMs = GeofenceStatus.ARRIVAL_POPUP_TTL_MS,
         )
     }
 
@@ -185,20 +195,16 @@ class GateNotifier {
         /** How long an event or failure notification survives untapped. */
         const val EVENT_TIMEOUT_MS = 10L * 60 * 1000
 
-        /**
-         * How long an arrival pop-up survives untapped — deliberately **shorter** than
-         * [pl.bitforge.domofon.domain.GeofenceStatus.ARRIVAL_COOLDOWN_MS].
-         *
-         * That gap is what makes the next arrival work. Reposting to an id that still holds a
-         * live notification is an *update*, and the car host does not draw a heads-up for an
-         * update — so the second arrival of the day appeared silently in the shade and never
-         * over Maps. With the slot guaranteed empty by the time the cooldown allows another
-         * one, every arrival pop-up is a genuinely new notification.
-         *
-         * Cancelling immediately before re-posting would look like the same fix and is not:
-         * `cancel` and `notify` are asynchronous and the notify can be swallowed, which
-         * trades a missing heads-up for a missing notification.
-         */
-        const val ARRIVAL_TIMEOUT_MS = 5L * 60 * 1000
+        // The arrival pop-up's lifetime is
+        // [pl.bitforge.domofon.domain.GeofenceStatus.ARRIVAL_POPUP_TTL_MS], not a constant of
+        // this class. It has to stay strictly under the window in which the arrival guard
+        // will permit another announcement: reposting to an id that still holds a live
+        // notification is an *update*, and the car host draws no heads-up for an update — so
+        // the second arrival appeared silently in the shade and never over Maps. Keeping both
+        // numbers in one companion is what stops one of them being edited alone.
+        //
+        // Cancelling immediately before re-posting would look like the same fix and is not:
+        // `cancel` and `notify` are asynchronous and the notify can be swallowed, which
+        // trades a missing heads-up for a missing notification.
     }
 }

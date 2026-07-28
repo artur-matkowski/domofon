@@ -44,6 +44,10 @@ Ground rules:
 | `domain/GatePolicyTest` | primaryAction + the full status-line matrix (incl. DEGRADED ≡ CONNECTED), audio-notice wording |
 | `domain/ReconnectPolicyTest` | 1 s→30 s doubling, reset |
 | `domain/HomeDistanceFormatTest` | zone bands vs radius, rounding, locale-pinned dot |
+| `domain/HomeFenceCrossingTest` | the in-app fence rule: first reading never fires, inward-only, re-arms on leaving, `reset()`; `sideOf`'s accuracy margin, incl. "a coarse fix cannot manufacture a crossing between two good ones" |
+| `domain/GeofenceStatusTest` | the Settings row's three-failures split, rejection-newer-than-delivery; and the arrival guard — cross-trigger dedup, **a second crossing minutes later still announces**, pop-up-still-on-screen, TTL < window ordering, side never refuses |
+| `domain/StateChangeAnnouncerTest` | the whole notification "whether" table: learning is not news, own-tap silence consumed by one change, surface-visible suppression |
+| `domain/GateTimestampTest` | `HH:mm` from a wire `ts` and from an observed epoch; 24-hour always; the two wire forms and the raw-string fallback |
 | `domain/camera/JpegDataUriTest` | the QML bridge's frame encoding: prefix, round-trip, uniqueness, no line breaks |
 | `domain/config/DomofonConfigParserTest` | trims, clamps, prefix normalisation, tls-port default, wire equality, toString redaction, **camera source + `CameraFeed` resolution** |
 | `domain/config/CameraSettingsRowsTest` | which camera rows each source shows, and that `ALL` covers every one |
@@ -144,14 +148,21 @@ small changes is phone-cold-start + one command + one DHU look.
       notifies
 - [ ] Broker unreachable, Domofon in front on the head unit → the **failure** notification
       still appears (it answers a button you pressed)
-- [ ] Leave a notification untapped → it is gone from the shade within 10 min (5 for an
+- [ ] Leave a notification untapped → it is gone from the shade within 10 min (**30 s** for an
       arrival); opening the app clears the event and arrival ones immediately
 
 **Geofence**
 - [ ] `DebugGeofenceTrigger` → arrival pop-up with fresh state within ~7 s, and Settings →
       "Arrival trigger status" shows the delivery
-- [ ] Fire it **twice inside 10 minutes** → exactly one pop-up (the shared cooldown)
-- [ ] Broker unreachable → "Gate unreachable — tap to retry", no action button
+- [ ] Fire it **twice, ~3 minutes apart** → **two** pop-ups. Two crossings are two arrivals;
+      this line used to read "twice inside 10 minutes → exactly one pop-up" and that cooldown
+      is precisely the defect D15 removed
+- [ ] Fire it twice **within ~30 s** → one pop-up, status row says `the last pop-up is still on
+      screen`. Not a rate limit on arrivals — a repost onto a live notification id would land
+      silently in the shade instead of as a heads-up
+- [ ] Arrival pop-up body reads `HH:MM · Tap to control`, and the time is when the fence was
+      crossed — not up to 9.5 s later, when the notification was actually built
+- [ ] Broker unreachable → "HH:MM · Gate unreachable — tap to retry", no action button
 - [ ] Revoke background location → status reads `NOT registered — needs "Allow all the time"`;
       re-grant → `Registered <ts>`
 - [ ] Grant **Approximate** rather than Precise → the app says precise location is needed
@@ -162,9 +173,13 @@ small changes is phone-cold-start + one command + one DHU look.
       connected. A pop-up on the way in; afterwards, the status row says whether the native
       fence delivered. Native missing + pop-up present = Play Services is the broken half,
       which is the diagnosis the failing drive could not produce.
+- [ ] **…then immediately out and back a second time, same session** → a **second** pop-up.
+      This is the D15 defect verbatim; if the status row instead reads
+      `the other trigger just announced this arrival`, the two triggers collapsed one crossing,
+      which is the window doing its job — but on a real out-and-back it should not appear
 - [ ] On the car screen during that drive: the distance line ticks down and carries its
       `next ≤Ns` cadence
-- [ ] **Fire the debug trigger twice ~6 minutes apart with Domofon backgrounded** → the second
+- [ ] **Fire the debug trigger twice ~1 minute apart with Domofon backgrounded** → the second
       one draws a *fresh* heads-up over the DHU, not just a shade entry. This is the "second
       pop-up never appeared" defect; a heads-up on the first and silence on the second means
       the notification id was still occupied
@@ -179,7 +194,7 @@ small changes is phone-cold-start + one command + one DHU look.
       Nothing witnessed the departure, and the inward crossing alone must be enough
 - [ ] Arrive with Domofon in front on the head unit → no pop-up, status row says
       `Last event ignored: a Domofon screen was in front`, and the *next* arrival is still
-      allowed (a suppressed pop-up must not consume the cooldown)
+      allowed (a suppressed pop-up must not consume the de-duplication window)
 - [ ] Android Auto → Settings → Notifications: Domofon is permitted. Not an app-side setting;
       a disabled toggle here looks exactly like a broken pop-up
 

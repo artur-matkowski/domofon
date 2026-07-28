@@ -59,7 +59,7 @@ class AppContainer(app: Application) : AutoCloseable {
     /**
      * What the app has observed about its own arrival trigger — registration outcome,
      * deliveries, pop-ups. Persistent, because the native fence delivers into a process that
-     * is usually dead and the arrival cooldown has to survive that.
+     * is usually dead and the arrival de-duplication guard has to survive that.
      */
     val geofenceStatus = GeofenceStatusStore(app)
 

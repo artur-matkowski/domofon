@@ -141,9 +141,9 @@ internal object ArrivalFlow {
         val now = System.currentTimeMillis() + 1
 
         // Nothing to announce to someone already looking at it: the car screen and the phone
-        // app both show this state and the button that acts on it. Deliberately *before* the
-        // cooldown is consumed — a pop-up we chose not to draw must not spend the budget for
-        // the next real one.
+        // app both show this state and the button that acts on it. Deliberately *before*
+        // `recordAnnounced` — a pop-up we chose not to draw must not spend the de-duplication
+        // window for the next real one.
         if (container.surfaces.anyVisible) {
             Log.i(TAG, "arrival from $source suppressed: a Domofon screen was in front")
             status.recordRejection("a Domofon screen was in front", now)
@@ -152,10 +152,11 @@ internal object ArrivalFlow {
         }
 
         // The two triggers are independent and will often both notice the same approach a
-        // few seconds apart. One announcement per arrival; the guard is persisted because
+        // few seconds apart. One announcement per *crossing*; the guard is persisted because
         // the native fence delivers into a process that is usually dead, so an in-memory
-        // latch on either side would never see the other's pop-up.
-        val refusal = arrivalRefusal(status.current, now)
+        // latch on either side would never see the other's pop-up. It refuses nothing for
+        // being merely soon — see [arrivalRefusal].
+        val refusal = arrivalRefusal(status.current, source, now)
         if (refusal != null) {
             Log.i(TAG, "arrival from $source suppressed: $refusal")
             status.recordRejection(refusal, now)
@@ -183,7 +184,10 @@ internal object ArrivalFlow {
                         // identical to a bug.
                         val state = container.gateService.awaitFreshState(STATE_TIMEOUT_MS)
                         Log.i(TAG, "arrival pop-up ($source) with state=${state?.state ?: "unknown"}")
-                        container.gateNotifier.notifyApproaching(context, state)
+                        // `now`, not the clock as it stands here: this line runs up to 9.5 s
+                        // after the crossing, and the time on the pop-up is meant to say when
+                        // the fence was crossed.
+                        container.gateNotifier.notifyApproaching(context, state, now)
                     }
                 }
             } finally {

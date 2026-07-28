@@ -27,8 +27,9 @@ class DebugGeofenceTrigger : BroadcastReceiver() {
         Log.i("Domofon", "debug geofence trigger")
         val pending = goAsync()
         // Claims to be the native fence, because that is what it stands in for — including
-        // going through the same arrival cooldown, so firing this twice in quick succession
-        // reproduces the real de-duplication rather than bypassing it.
+        // going through the same guard, so firing this twice reproduces the real behaviour
+        // rather than bypassing it: two shots more than 30 s apart give two pop-ups, and a
+        // second inside 30 s is refused because notification 1002 is still on screen.
         ArrivalFlow.run(context.applicationContext, GeofenceStatus.SOURCE_NATIVE) { pending.finish() }
     }
 }

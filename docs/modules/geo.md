@@ -9,7 +9,7 @@ The home geofence (the arrival pop-up trigger) and the foreground-only distance 
 | Class | Owns |
 |---|---|
 | `data/location/GeofenceManager` | Register/remove the one fence (`ID = "home"`, ENTER **and** EXIT) to match settings; permission checks |
-| `receivers/GeofenceReceiver` + `ArrivalFlow` | Validate the event; record EXIT as a readout; run the arrival pop-up; the shared arrival cooldown |
+| `receivers/GeofenceReceiver` + `ArrivalFlow` | Validate the event; record EXIT as a readout; run the arrival pop-up; the shared arrival guard |
 | `receivers/BootReceiver` | Re-register after reboot **and after an app update** (geofences survive neither) |
 | `data/location/HomeDistanceTracker` | Adaptive-cadence fused-location polling → `StateFlow<Reading?>`, and the in-app fence |
 | `domain/HomeFenceCrossing` | The inward-crossing rule, and `sideOf` — which side a fix can *prove* we are on |
@@ -49,15 +49,14 @@ off `home.enabled`.
   none"). The whole flow is bounded to 9.5 s inside goAsync's budget, on the container's
   `appScope`.
 - **Both triggers funnel through `ArrivalFlow`, whose guard is `domain/arrivalRefusal`.** It
-  enforces a 10-minute cooldown and nothing else (invariant 8): the two triggers will
-  routinely both notice one approach seconds apart, and one pop-up per arrival is the point.
-  It returns the *reason* rather than a boolean, so a refusal is recorded and readable in
-  Settings rather than looking like nothing happening. The timestamp is *persisted*, because
-  the native fence delivers into a process that is usually dead — an in-memory latch on either
-  side would never see the other's pop-up.
+  de-duplicates one crossing seen by both triggers, and refuses nothing for being merely soon
+  (invariant 8): every inward crossing is an arrival. It returns the *reason* rather than a
+  boolean, so a refusal is recorded and readable in Settings rather than looking like nothing
+  happening. The timestamp is *persisted*, because the native fence delivers into a process that
+  is usually dead — an in-memory latch on either side would never see the other's pop-up.
 - **An arrival is not announced while a Domofon surface is in front** — the car screen on the
   head unit, or the phone app. It already shows the gate and the button. The refusal is
-  recorded and does **not** consume the cooldown; see
+  recorded and does **not** consume the de-duplication window; see
   [ui-notifications](ui-notifications.md) invariant 12.
 - Every outcome is recorded to `GeofenceStatusStore` and rendered in Settings: the
   registration result (including the Play Services status code on failure), the last native
@@ -113,8 +112,21 @@ off `home.enabled`.
 8. **The crossing direction is the trigger, and nothing corroborates it.** Artur's rule, live
    testing 2026-07-28: *coming from outside the circle to inside it is arriving* — and that is
    all. Both triggers already carry a direction (the native fence's `GEOFENCE_TRANSITION_ENTER`,
-   the in-app fence's observed outward-then-inward pair), so `arrivalRefusal` applies the
-   cooldown and nothing else.
+   the in-app fence's observed outward-then-inward pair), so `arrivalRefusal` never
+   second-guesses direction.
+
+   **It also never refuses a crossing for being soon** (D15). It refuses exactly two things,
+   and neither is a rate limit:
+
+   | Refusal | Window | What it is really about |
+   |---|---|---|
+   | `the other trigger just announced this arrival` | `CROSS_TRIGGER_WINDOW_MS` = 90 s, and only when `source` differs from `lastAnnouncedBy` | the *same* crossing, seen by both triggers seconds apart — the one thing D13 needs a persisted guard for |
+   | `the last pop-up is still on screen` | `ARRIVAL_POPUP_TTL_MS` = 30 s, any source | notification id 1002, not arrivals: a repost onto a live one is an *update*, and the car host draws no heads-up for an update |
+
+   The second window is kept strictly under the first, and a unit test asserts that ordering
+   outright. This was a flat **ten-minute cooldown** until 2026-07-28, when it swallowed a real
+   second arrival: out past the fence and back, then straight out and back again, produced one
+   pop-up. Two crossings are two arrivals however close together they fall.
 
    This invariant briefly said the opposite — that an ENTER was refused unless the app had
    *separately* observed a departure, evidenced by the persisted `FenceSide`. **That was
@@ -150,8 +162,9 @@ off `home.enabled`.
   An Android Auto session is not a foreground service, so whether the OS keeps feeding
   location to a backgrounded projected session is a device question. If it does not, the
   in-app fence only fires while Domofon is the visible car screen.
-- Debug trigger (goes through the same arrival cooldown, so firing it twice inside 10 minutes
-  gives one pop-up — that is the de-duplication working, not a bug):
+- Debug trigger (goes through the same guard as a real ENTER: fire it twice more than 30 s
+  apart and you get two pop-ups, which is correct — inside 30 s the second is refused with
+  `the last pop-up is still on screen`, which is the notification-id rule, not a rate limit):
   `adb shell am broadcast -a pl.bitforge.domofon.DEBUG_GEOFENCE -n pl.bitforge.domofon/.receivers.DebugGeofenceTrigger`
 
 ## Related pages

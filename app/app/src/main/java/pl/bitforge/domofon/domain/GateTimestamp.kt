@@ -49,4 +49,14 @@ fun hourMinute(rawTs: String, zone: ZoneId = ZoneId.systemDefault()): String {
     return HH_MM.withZone(zone).format(instant)
 }
 
+/**
+ * The same `HH:mm`, for an event the *app* observed rather than one the bridge reported.
+ *
+ * The arrival pop-up needs this: a fence crossing has no wire timestamp, only the
+ * `System.currentTimeMillis()` the arrival flow read when it decided. Same 24-hour rule as
+ * [hourMinute], and no fallback branch — an epoch millisecond cannot fail to parse.
+ */
+fun hourMinuteAt(epochMs: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+    HH_MM.withZone(zone).format(Instant.ofEpochMilli(epochMs))
+
 private val HH_MM: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")

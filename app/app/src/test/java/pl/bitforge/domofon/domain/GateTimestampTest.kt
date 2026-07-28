@@ -42,6 +42,29 @@ class GateTimestampTest {
         assertEquals("", hourMinute("", warsaw))
     }
 
+    // --- events the app observed itself, which carry no wire timestamp ------------------
+
+    @Test
+    fun `an observed instant renders as local wall clock`() {
+        // The arrival pop-up's time: a fence crossing has only System.currentTimeMillis().
+        assertEquals(
+            "18:34",
+            hourMinuteAt(java.time.Instant.parse("2026-07-27T16:34:12Z").toEpochMilli(), warsaw),
+        )
+    }
+
+    @Test
+    fun `an observed instant is 24-hour and zero-padded too`() {
+        assertEquals(
+            "06:34",
+            hourMinuteAt(java.time.Instant.parse("2026-07-27T04:34:00Z").toEpochMilli(), warsaw),
+        )
+        assertEquals(
+            "00:05",
+            hourMinuteAt(java.time.Instant.parse("2026-07-26T22:05:00Z").toEpochMilli(), warsaw),
+        )
+    }
+
     @Test
     fun `the parser accepts exactly the two wire forms`() {
         assertEquals(

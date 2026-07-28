@@ -15,7 +15,7 @@ package pl.bitforge.domofon.domain
  * |---|---|
  * | not registered | the fence was never armed — permission or position |
  * | registered, no ENTER | armed, and Play Services never delivered — OEM battery management |
- * | ENTER seen, no pop-up | delivered, and the flow dropped it — cooldown, or the broker |
+ * | ENTER seen, no pop-up | delivered, and the flow dropped it — a guard, or the broker |
  *
  * **Timestamps and status codes only — never coordinates** ([geo invariant 5]). The home
  * position is the user's address, and a settings row is as readable as logcat.
@@ -45,13 +45,27 @@ data class GeofenceStatus(
         const val SOURCE_IN_APP = "in-app"
 
         /**
-         * How long after an arrival pop-up the next one is refused.
+         * How long an arrival pop-up survives untapped — and, because of that, the floor
+         * under two announcements onto the same notification id.
          *
-         * The two triggers are independent by design and will often both notice the same
-         * approach, seconds apart. One announcement per arrival is the point; ten minutes is
-         * comfortably longer than the two can disagree by and far shorter than a round trip.
+         * It lives here rather than in `GateNotifier` so that it sits beside
+         * [CROSS_TRIGGER_WINDOW_MS]: reposting onto a *live* id is an update, and the car host
+         * draws no heads-up for an update (D14 point 2), so this must stay strictly the
+         * smaller of the two. A constant kept in another module is a constant that drifts.
          */
-        const val ARRIVAL_COOLDOWN_MS = 10L * 60 * 1000
+        const val ARRIVAL_POPUP_TTL_MS = 30_000L
+
+        /**
+         * How long after an announcement the *other* trigger is assumed to be reporting the
+         * same crossing rather than a new one.
+         *
+         * This was a flat ten-minute cooldown, and ten minutes is roughly twenty times what
+         * the job needs: the two triggers disagree by seconds, and the surplus refused a real
+         * arrival — out past the fence and back, then straight out and back again, produced
+         * one pop-up instead of two (Artur, live testing 2026-07-28). Long enough to collapse
+         * one approach seen twice; short enough that no genuine out-and-back falls inside it.
+         */
+        const val CROSS_TRIGGER_WINDOW_MS = 90_000L
     }
 }
 
@@ -103,19 +117,45 @@ enum class FenceSync {
  * them: the native fence delivers into a process that is usually dead, so an in-memory latch
  * on one side would never see the other's announcement.
  *
- * **The cooldown is the only rule here, deliberately.** Both triggers arrive already carrying
- * a direction — the native fence's ENTER, the in-app fence's observed outward-then-inward
- * pair — and second-guessing that direction against the recorded [FenceSide] would refuse
- * real arrivals whenever the app happened not to be running for the departure. See
- * [FenceSide].
+ * **Neither rule below is about arrivals being too frequent.** Every inward crossing is an
+ * arrival and gets its pop-up, however soon it follows the last one — that is Artur's rule,
+ * and a flat cooldown broke it. What is refused is a crossing already announced (the *same*
+ * one, seen by the other trigger) and a repost that the car host would draw silently.
+ *
+ * Direction itself is never second-guessed. Both triggers arrive already carrying one — the
+ * native fence's ENTER, the in-app fence's observed outward-then-inward pair — and checking
+ * it against the recorded [FenceSide] would refuse real arrivals whenever the app happened
+ * not to be running for the departure. See [FenceSide].
+ *
+ * @param source which trigger is claiming this arrival — [GeofenceStatus.SOURCE_NATIVE] or
+ *   [GeofenceStatus.SOURCE_IN_APP]. Compared against who announced last, because "the other
+ *   trigger, moments ago" is the one case that is not a second arrival.
  */
 fun arrivalRefusal(
     status: GeofenceStatus,
+    source: String,
     nowMs: Long,
-    cooldownMs: Long = GeofenceStatus.ARRIVAL_COOLDOWN_MS,
+    crossTriggerMs: Long = GeofenceStatus.CROSS_TRIGGER_WINDOW_MS,
+    slotMs: Long = GeofenceStatus.ARRIVAL_POPUP_TTL_MS,
 ): String? {
     val last = status.lastAnnouncedAtMs
-    if (last > 0L && nowMs - last < cooldownMs) return "another pop-up was posted minutes ago"
+    if (last <= 0L) return null
+    val since = nowMs - last
+
+    // The whole reason a refusal exists: the two triggers are independent and will routinely
+    // both notice one approach, seconds apart. Same source is a different matter — the native
+    // fence does not deliver ENTER twice without an EXIT between, so a second one is a second
+    // crossing.
+    if (source != status.lastAnnouncedBy && since < crossTriggerMs) {
+        return "the other trigger just announced this arrival"
+    }
+
+    // Not a rule about arrivals at all — a rule about the notification id. Posting onto one
+    // that still holds a live pop-up is an *update*, and the car host draws no heads-up for
+    // an update, so the pop-up would land silently in the shade. Kept strictly under
+    // crossTriggerMs so it can only ever bite two same-source crossings half a minute apart.
+    if (since < slotMs) return "the last pop-up is still on screen"
+
     return null
 }
 

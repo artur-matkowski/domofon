@@ -15,7 +15,7 @@ import pl.bitforge.domofon.domain.GeofenceStatus
  * binder and the car screen for a value none of them render.
  *
  * Persistent, not in-memory, for one specific reason: the native fence delivers into a
- * process that is usually dead, so the arrival cooldown that de-duplicates the two triggers
+ * process that is usually dead, so the guard that de-duplicates the two arrival triggers
  * has nowhere else it could live and still work.
  *
  * Synchronous like the config store, and for the same reason — every writer here is a
