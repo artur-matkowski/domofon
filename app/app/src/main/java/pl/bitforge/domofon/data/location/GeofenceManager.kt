@@ -79,11 +79,11 @@ class GeofenceManager(
             .setRequestId(ID)
             .setCircularRegion(home.latitude!!, home.longitude!!, home.radiusMeters)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
-            // EXIT alongside ENTER, and it never pops anything up. It is the only evidence of
-            // having left that survives the app being dead for the whole trip, and
-            // [arrivalRefusal] needs that evidence: without it an ENTER delivered while the
-            // car is parked on the driveway is indistinguishable from one delivered on the
-            // way home. Costs one extra receiver wake per trip.
+            // EXIT alongside ENTER, and it never pops anything up — it decides nothing at
+            // all. It is registered so that after a drive with no pop-up the Settings row can
+            // say whether Play Services was delivering *anything*, which is the difference
+            // between "the fence is dead" and "the fence fired and the flow dropped it". One
+            // extra receiver wake per trip buys that.
             .setTransitionTypes(
                 Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT
             )

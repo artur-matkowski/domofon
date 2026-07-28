@@ -9,7 +9,7 @@ The home geofence (the arrival pop-up trigger) and the foreground-only distance 
 | Class | Owns |
 |---|---|
 | `data/location/GeofenceManager` | Register/remove the one fence (`ID = "home"`, ENTER **and** EXIT) to match settings; permission checks |
-| `receivers/GeofenceReceiver` + `ArrivalFlow` | Validate the event; record EXIT as evidence; run the arrival pop-up; the shared arrival guard |
+| `receivers/GeofenceReceiver` + `ArrivalFlow` | Validate the event; record EXIT as a readout; run the arrival pop-up; the shared arrival cooldown |
 | `receivers/BootReceiver` | Re-register after reboot **and after an app update** (geofences survive neither) |
 | `data/location/HomeDistanceTracker` | Adaptive-cadence fused-location polling → `StateFlow<Reading?>`, and the in-app fence |
 | `domain/HomeFenceCrossing` | The inward-crossing rule, and `sideOf` — which side a fix can *prove* we are on |
@@ -49,22 +49,21 @@ off `home.enabled`.
   none"). The whole flow is bounded to 9.5 s inside goAsync's budget, on the container's
   `appScope`.
 - **Both triggers funnel through `ArrivalFlow`, whose guard is `domain/arrivalRefusal`.** It
-  enforces a 10-minute cooldown — the two triggers will routinely both notice one approach
-  seconds apart, and one pop-up per arrival is the point — and, for the native fence only,
-  Artur's departure rule (invariant 8). It returns the *reason* rather than a boolean, so a
-  refusal is recorded and readable in Settings rather than looking like nothing happening.
-  The state behind it is *persisted*, because the native fence delivers into a process that is
-  usually dead — an in-memory latch on either side would never see the other's pop-up.
+  enforces a 10-minute cooldown and nothing else (invariant 8): the two triggers will
+  routinely both notice one approach seconds apart, and one pop-up per arrival is the point.
+  It returns the *reason* rather than a boolean, so a refusal is recorded and readable in
+  Settings rather than looking like nothing happening. The timestamp is *persisted*, because
+  the native fence delivers into a process that is usually dead — an in-memory latch on either
+  side would never see the other's pop-up.
 - **An arrival is not announced while a Domofon surface is in front** — the car screen on the
   head unit, or the phone app. It already shows the gate and the button. The refusal is
   recorded and does **not** consume the cooldown; see
   [ui-notifications](ui-notifications.md) invariant 12.
 - Every outcome is recorded to `GeofenceStatusStore` and rendered in Settings: the
   registration result (including the Play Services status code on failure), the last native
-  delivery, the last in-app crossing, which side of the fence the app last had evidence for
-  (the input to invariant 8, so a refused arrival reads as a consequence rather than a
-  mystery), the last pop-up and which trigger won it, and the reason any delivery was thrown
-  away. **Timestamps and status codes only — never coordinates**
+  delivery, the last in-app crossing, which side of the fence the app last observed (a readout
+  only — invariant 8), the last pop-up and which trigger won it, and the reason any delivery
+  was thrown away. **Timestamps and status codes only — never coordinates**
   (invariant 5); a settings row is as readable as logcat.
 - The distance line ("1.5 km · approaching home") reuses the geofence's own "Allow all the
   time" grant and stays silent unless the feature is on and located — a build that never
@@ -111,20 +110,23 @@ off `home.enabled`.
    (`BOOT_COMPLETED` **and `MY_PACKAGE_REPLACED`**), and `CarGateSession.onCreateScreen`.
    This invariant used to say "which every activity start performs" — which quietly assumed
    the user opens the phone. A car-only user never does, so their fence was never repaired.
-8. **An arrival needs evidence that we left.** Artur's rule, live testing 2026-07-28: *if the
-   previous position was outside the fence and this one is inside, that is an arrival* —
-   anything else is Play Services re-evaluating a fence around a parked car, which is what put
-   "Approaching home" on the screen of a car sitting on its own driveway. The evidence is a
-   persisted `FenceSide` in `GeofenceStatusStore`, written from three places: a native EXIT
-   (which is **why EXIT is registered** — it is the only evidence that survives the app being
-   dead for the whole trip, and it never pops anything up), every confident distance reading
-   (whether or not the in-app fence is on), and the arrival itself. Two deliberate escapes:
-   the rule applies to the **native fence only** — the in-app fence and the debug trigger
-   observed the crossing themselves, and applying it to the debug trigger would refuse every
-   test from a desk, which is inside the fence — and a recorded `INSIDE` **stops being
-   believed after 12 h** (`SIDE_TRUST_MS`). That expiry is the deliberate trade: a stuck
-   `INSIDE` would silence the feature permanently, which is the exact failure a 10 km round
-   trip already cost once, and a redundant pop-up is the cheaper mistake.
+8. **The crossing direction is the trigger, and nothing corroborates it.** Artur's rule, live
+   testing 2026-07-28: *coming from outside the circle to inside it is arriving* — and that is
+   all. Both triggers already carry a direction (the native fence's `GEOFENCE_TRANSITION_ENTER`,
+   the in-app fence's observed outward-then-inward pair), so `arrivalRefusal` applies the
+   cooldown and nothing else.
+
+   This invariant briefly said the opposite — that an ENTER was refused unless the app had
+   *separately* observed a departure, evidenced by the persisted `FenceSide`. **That was
+   wrong**, and Artur said so the same day: switch the phone off at home, drive away with the
+   app dead, switch it on again already on the way back, and nothing observed a departure while
+   the crossing is still unambiguously inward. The rule would have refused a real arrival —
+   the exact failure D13 exists to avoid — to guard against a spurious ENTER that had never
+   actually been observed. Direction needs no second opinion.
+
+   `FenceSide` survives as a **readout**: EXIT stays registered and every confident distance
+   reading still records a side, purely so the Settings row can answer "did Play Services see
+   me leave?" after a drive that produced no pop-up. It gates nothing.
 9. **A fix only claims a side it can prove.** `sideOf` uses the fix's own reported accuracy as
    the margin: `INSIDE` needs `meters + accuracy ≤ R`, `OUTSIDE` needs `meters - accuracy > R`,
    and anything between is `UNKNOWN` — recorded nowhere and acted on by nobody. The tracker

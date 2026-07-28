@@ -192,7 +192,7 @@ visible car screen — which is still strictly more than before.
 
 **Status:** active. See [modules/geo.md](../modules/geo.md).
 
-### D14 — Notifications are silent while a Domofon surface is in front, and an arrival must be preceded by a departure
+### D14 — Notifications are silent while a Domofon surface is in front; an arrival is a direction and nothing more
 
 **Context (Artur, live testing 2026-07-28).** Four complaints from one drive: a heads-up
 fired over the Domofon car screen itself; the body carried a full ISO-8601 timestamp; a second
@@ -214,27 +214,37 @@ same id was an *update*, which the car host does not draw a heads-up for.
    purpose, so the next arrival always lands on an empty id and counts as new. *Not* by
    cancelling before re-posting: `cancel` and `notify` are asynchronous and the notify can be
    swallowed.
-3. **An ENTER with no evidence of a departure is not an arrival.** Artur's rule, in his words:
-   "if my previous position was outside the fence, and now I am inside it, then I am arriving."
-   Implemented as a persisted `FenceSide` — hence `GEOFENCE_TRANSITION_EXIT` is now registered,
-   because it is the only evidence that survives the app being dead for a whole trip. Applies
-   to the native fence only; the in-app fence and the debug trigger observed the crossing
-   themselves.
+3. **The crossing direction is the trigger, and nothing corroborates it.** Artur's rule, in his
+   words: *"coming back from outside, to inside of the circle."* `GEOFENCE_TRANSITION_ENTER`
+   already **is** that direction, so it is trusted as delivered.
+
+   *First attempt, retracted the same day.* This was implemented as a persisted `FenceSide`
+   that refused an ENTER unless the app had *separately* observed a departure. Artur rejected
+   it immediately, with the case that settles it: switch the phone off at home, drive away with
+   the app dead, switch it on again already on the way back — nothing observed a departure,
+   the crossing is still unambiguously inward, and the rule refuses a real arrival. Two further
+   reasons it was wrong: the spurious ENTER it guarded against was **never observed** (the
+   "Approaching home" on the driveway turned out to be the stale notification of point 2), and
+   it made a universal signal conditional on a weaker, intermittent one. Direction needs no
+   second opinion.
+
+   What survives is a **readout**. `GEOFENCE_TRANSITION_EXIT` stays registered and every
+   confident distance reading still records a side, purely so the Settings row can answer "did
+   Play Services see me leave?" after a drive that produced no pop-up — the same
+   split-the-failures-apart argument as D13. It gates nothing.
 
 **Consequences.** `SurfacePresence` is a new process-wide singleton in `AppContainer`, and the
-notification path acquires its first dependency on UI lifecycle. Play Services now wakes the
-receiver once more per trip (the EXIT). `HomeDistanceTracker` records the fence side on every
-confident fix whether or not the in-app fence is switched on, because the *native* fence is
-what needs the evidence.
+notification path acquires its first dependency on UI lifecycle. Play Services wakes the
+receiver once more per trip (the EXIT), for diagnosis only. `arrivalRefusal` replaces
+`mayAnnounceArrival` and returns the *reason*, so every refusal reaches the status row.
 
-**Accepted trade-off.** Trust in a recorded `INSIDE` expires after 12 h (`SIDE_TRUST_MS`),
-after which an ENTER is allowed through. Without the expiry, one dropped EXIT would silence
-the arrival pop-up permanently — which is precisely the failure the 10 km round trip of
-2026-07-27 already cost (D13). A redundant pop-up is the cheaper mistake, and the Settings
-status row names whichever one happened.
+**Also decided (2026-07-28):** the in-app fence claims a side only when the fix's own accuracy
+does not span the fence (`sideOf`). This is not a second guard — it is what makes *direction*
+trustworthy, since under a bare `meters <= radius` one cold cell-derived fix between two good
+ones is itself an outside→inside crossing.
 
 **Rejected:** gating arrivals on Activity Recognition or a car-connection signal. Both add a
-permission or a dependency to answer a question a persisted fence side answers for free.
+permission or a dependency in order to second-guess a direction the fence already reports.
 
 ---
 

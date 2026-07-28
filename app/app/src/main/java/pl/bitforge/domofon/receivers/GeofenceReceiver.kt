@@ -18,10 +18,11 @@ import pl.bitforge.domofon.domain.arrivalRefusal
  * Entering the home fence surfaces the gate on the car screen; leaving it is recorded and
  * does nothing else.
  *
- * EXIT is registered ([GeofenceManager]) purely as evidence. Without it, an ENTER delivered
- * while the car is parked on its own driveway — Play Services re-evaluating a fence that
- * `sync()` just re-registered — is indistinguishable from one delivered on the way home, and
- * the app announced both (Artur, live testing 2026-07-28).
+ * EXIT is registered ([GeofenceManager]) purely so the Settings row can say whether Play
+ * Services saw us leave. It gates nothing: the ENTER's direction is the trigger, and making
+ * it conditional on having separately observed the departure would refuse a real arrival
+ * whenever the app was not running for it (Artur, 2026-07-28). See
+ * [FenceSide][pl.bitforge.domofon.domain.FenceSide].
  *
  * No foreground service, unlike the original geofence design: the rx topics are retained, so the current state
  * lands within a second or two of connecting and a long-lived connection buys nothing for
@@ -78,10 +79,9 @@ class GeofenceReceiver : BroadcastReceiver() {
             return
         }
 
-        // EXIT is registered for one reason: it is the only evidence of leaving that survives
-        // the app being dead for the whole trip, and without evidence of leaving an ENTER
-        // cannot be told apart from Play Services re-evaluating a fence around a parked car.
-        // It is not an arrival and never pops anything up.
+        // Recorded, and that is all it does. It is not an arrival and never pops anything up;
+        // it exists so a drive can be read back afterwards as "Play Services saw me leave and
+        // then said nothing", which is a different fault from "it never delivered at all".
         if (transition == Geofence.GEOFENCE_TRANSITION_EXIT) {
             Log.i(TAG, "geofence EXIT")
             status.recordSide(FenceSide.OUTSIDE)
@@ -126,16 +126,8 @@ internal object ArrivalFlow {
      *   [GeofenceStatus.SOURCE_IN_APP]. Recorded, so a drive can be read afterwards as
      *   "the native fence never fired and the in-app one carried it", which is the diagnosis
      *   the failing drive could not produce.
-     * @param requireDeparture whether this trigger needs the persisted fence side to prove we
-     *   were outside. See [arrivalRefusal] — true for the native fence, which remembers
-     *   nothing, false for triggers that observed the crossing themselves.
      */
-    fun run(
-        context: Context,
-        source: String,
-        requireDeparture: Boolean = true,
-        finish: () -> Unit = {},
-    ) {
+    fun run(context: Context, source: String, finish: () -> Unit = {}) {
         // The app-wide scope, not an ad-hoc one — the old CoroutineScope created here was
         // never cancelled. The outer timeout hard-bounds the whole flow inside goAsync's
         // ~10 s budget.
@@ -162,10 +154,8 @@ internal object ArrivalFlow {
         // The two triggers are independent and will often both notice the same approach a
         // few seconds apart. One announcement per arrival; the guard is persisted because
         // the native fence delivers into a process that is usually dead, so an in-memory
-        // latch on either side would never see the other's pop-up. The same call carries
-        // Artur's rule for the native fence: an ENTER with no evidence of having left is
-        // Play Services re-evaluating around a parked car, not an arrival.
-        val refusal = arrivalRefusal(status.current, now, requireDeparture)
+        // latch on either side would never see the other's pop-up.
+        val refusal = arrivalRefusal(status.current, now)
         if (refusal != null) {
             Log.i(TAG, "arrival from $source suppressed: $refusal")
             status.recordRejection(refusal, now)
@@ -173,8 +163,8 @@ internal object ArrivalFlow {
             return
         }
 
-        // Read-then-write in one place, so nothing has to reason about the order in which the
-        // trigger and the guard touch the side.
+        // Keeps the Settings readout honest — an arrival means we are inside. Nothing reads
+        // it back to decide anything; see [FenceSide].
         status.recordSide(FenceSide.INSIDE, now)
         status.recordAnnounced(source, now)
 

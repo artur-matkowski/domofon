@@ -116,12 +116,7 @@ class AppContainer(app: Application) : AutoCloseable {
             geofence = geofenceManager,
             status = geofenceStatus,
             appScope = appScope,
-            // requireDeparture = false: this trigger *is* an observed outside→inside
-            // crossing, so asking the persisted fence side the same question again would
-            // only give it a second chance to say no.
-            onArrival = {
-                ArrivalFlow.run(appContext, GeofenceStatus.SOURCE_IN_APP, requireDeparture = false)
-            },
+            onArrival = { ArrivalFlow.run(appContext, GeofenceStatus.SOURCE_IN_APP) },
         )
 
     /** One ViewModel per surface, on that surface's lifecycle scope. */

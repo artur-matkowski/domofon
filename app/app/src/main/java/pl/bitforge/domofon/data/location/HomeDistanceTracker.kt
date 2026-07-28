@@ -185,8 +185,10 @@ class HomeDistanceTracker(
             val accuracy = if (fix.hasAccuracy()) fix.accuracy else Float.MAX_VALUE
             val side = sideOf(meters, accuracy, home.radiusMeters)
 
-            // Recorded whether or not the in-app fence is switched on: this is the app's
-            // cheapest evidence that it left, and the *native* fence is the one that needs it.
+            // Recorded whether or not the in-app fence is switched on, and read back by
+            // nothing but the Settings row: it is the cheapest way for a drive to be
+            // reconstructed afterwards. It is *not* a precondition for an arrival — see
+            // [FenceSide].
             if (side != FenceSide.UNKNOWN) status.recordSide(side)
 
             // The opt-in in-app fence, evaluated on the same readings that feed the readout.

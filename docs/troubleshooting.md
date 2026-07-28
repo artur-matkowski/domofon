@@ -542,24 +542,26 @@ append-only history — entries are never rewritten to match later refactors.
   **Fix**: `sync()` from `CarGateSession.onCreateScreen`, and `MY_PACKAGE_REPLACED` added to
   `BootReceiver`.
 
-- **Symptom**: "Approaching home" fires while the car is parked on its own driveway — typically
-  just after starting the app or the car session. (Artur, 2026-07-28.)
-  **Cause**: two, and the status row tells them apart. If `Last pop-up … (Play Services)`:
-  Play Services re-evaluating the fence after `sync()` re-registered it. `setInitialTrigger(0)`
-  does not prevent this — a re-added fence has no tracked state, and the first evaluation
-  inside the region can be delivered as an ENTER. Nothing in the app remembered it had never
-  left, so it believed the delivery. If `(in-app)`: a cold cell-derived fix landing kilometres
-  off, followed by a good one, which under a bare `meters <= radius` is a textbook
-  outside→inside crossing.
-  **Fix**: [geo](modules/geo.md) invariants 8 and 9 — a persisted `FenceSide` (with
-  `GEOFENCE_TRANSITION_EXIT` now registered so leaving is recorded even with the app dead), and
-  `sideOf`, which refuses to claim a side when the fix's own accuracy spans the fence. Read
-  Settings → *Arrival trigger status*: `Last seen: inside the fence <ts>` is the evidence, and
-  `Last event ignored: already inside the fence` is the rule firing.
-  **If the opposite happens** — a real arrival is refused with `already inside the fence` — the
-  app never saw you leave. That is Play Services dropping the EXIT; the 12 h `SIDE_TRUST_MS`
-  window releases it after a while, and the timestamp on the `Last seen` line says how stale
-  the belief was.
+- **Symptom**: "Approaching home" is on screen while the car is parked on its own driveway.
+  (Artur, 2026-07-28.)
+  **First check whether anything actually fired.** In the observed case nothing had — it was
+  the previous drive's pop-up, never dismissed, still in the shade; see the notification entry
+  above. Settings → *Arrival trigger status* settles it: if `Last pop-up` is hours old, no
+  trigger fired and this is that entry, not this one.
+  **If a trigger really did fire on the driveway**, `Last pop-up … (in-app)` means a cold
+  cell-derived fix landing kilometres off followed by a good one, which under a bare
+  `meters <= radius` is a textbook outside→inside crossing. Fixed by
+  [geo](modules/geo.md) invariant 9 (`sideOf`): a side is claimed only when the fix's own
+  accuracy does not span the fence. `(Play Services)` means GMS delivered an ENTER while
+  parked — plausible after `sync()` re-registers the fence, since a re-added fence has no
+  tracked state inside GMS. **Nothing in the app guards against that, deliberately** — see
+  invariant 8 and [D14](architecture/decisions.md). An ENTER *is* a direction; refusing one
+  because the app had not separately witnessed the departure drops real arrivals (phone off at
+  home, on again on the way back), which is a far worse bug than one redundant pop-up that the
+  10-minute cooldown already caps.
+  **Diagnostic, not a gate**: the `Last seen: inside/outside the fence` line says whether Play
+  Services delivered the EXIT on the way out. No EXIT and no ENTER on a real round trip means
+  the fence is dead, not late.
 
 - **Symptom**: fires very late.
   **Fix**: larger radius (300–500 m); `setNotificationResponsiveness` is 0 since 2026-07-27

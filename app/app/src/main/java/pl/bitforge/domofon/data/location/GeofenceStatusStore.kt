@@ -44,12 +44,13 @@ class GeofenceStatusStore(context: Context) {
         )
 
     /**
-     * Which side of the fence we now have evidence for.
+     * Which side of the fence we last observed. A readout; nothing gates on it
+     * ([FenceSide]).
      *
      * **Only writes when the side actually changes.** The distance tracker calls this on every
      * fix, and its cadence floor is 10 s — rewriting the same value all the way home would be
-     * a prefs commit per fix for no information. The timestamp therefore means "since when",
-     * which is exactly what [GeofenceStatus.SIDE_TRUST_MS] wants to measure.
+     * a prefs commit per fix for no information. It also makes the timestamp mean "since when",
+     * which is the more useful of the two readings on a settings row.
      */
     fun recordSide(side: FenceSide, atMs: Long = System.currentTimeMillis()) {
         if (current.side == side) return

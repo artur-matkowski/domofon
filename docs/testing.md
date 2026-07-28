@@ -168,12 +168,15 @@ small changes is phone-cold-start + one command + one DHU look.
       one draws a *fresh* heads-up over the DHU, not just a shade entry. This is the "second
       pop-up never appeared" defect; a heads-up on the first and silence on the second means
       the notification id was still occupied
-- [ ] **Get into the car at home** with the app freshly started → **no** "Approaching home".
-      Settings → "Arrival trigger status" reads `Last seen: inside the fence <ts>`, and if
-      Play Services delivered anyway, `Last event ignored: already inside the fence <ts>`
+- [ ] **Get into the car at home** with the app freshly started → **no** "Approaching home"
+      left over from the last drive. If one appears anyway, read `Last pop-up` in the status
+      row: hours old means the shade never cleared, fresh means a trigger really fired
 - [ ] On the real drive, **on the way out**: the status row flips to `Last seen: outside the
-      fence` — that is the newly registered `GEOFENCE_TRANSITION_EXIT` arriving, and the
-      departure rule has nothing to work with without it
+      fence` — the `GEOFENCE_TRANSITION_EXIT` arriving. Diagnostic only; it must **never** be
+      a precondition for the pop-up on the way in
+- [ ] **The phone-was-off case**: switch the phone off at home, leave, switch it on once
+      already outside the radius, drive home with it in a pocket → the pop-up still arrives.
+      Nothing witnessed the departure, and the inward crossing alone must be enough
 - [ ] Arrive with Domofon in front on the head unit → no pop-up, status row says
       `Last event ignored: a Domofon screen was in front`, and the *next* arrival is still
       allowed (a suppressed pop-up must not consume the cooldown)

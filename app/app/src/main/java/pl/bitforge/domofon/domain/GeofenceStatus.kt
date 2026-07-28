@@ -36,7 +36,7 @@ data class GeofenceStatus(
     /** Why the most recent delivery was thrown away, if one was. */
     val lastRejection: String = "",
     val lastRejectionAtMs: Long = 0L,
-    /** Which side of the fence the app last had evidence for. See [FenceSide]. */
+    /** Which side of the fence the app last observed. Reported, never acted on — see [FenceSide]. */
     val side: FenceSide = FenceSide.UNKNOWN,
     val sideAtMs: Long = 0L,
 ) {
@@ -52,31 +52,26 @@ data class GeofenceStatus(
          * comfortably longer than the two can disagree by and far shorter than a round trip.
          */
         const val ARRIVAL_COOLDOWN_MS = 10L * 60 * 1000
-
-        /**
-         * How long a recorded [FenceSide] is believed.
-         *
-         * The "you must have been outside" rule is only as good as the evidence behind it,
-         * and the evidence can go stale: Play Services can drop an EXIT, and the distance
-         * tracker only runs while a surface is alive. Past this age the app admits it does
-         * not know where it is and lets the arrival through — because a stuck `INSIDE` would
-         * silence the feature permanently, which is the exact failure a 10 km round trip
-         * already cost once, and a redundant pop-up is the cheaper mistake.
-         */
-        const val SIDE_TRUST_MS = 12L * 60 * 60 * 1000
     }
 }
 
 /**
- * Which side of the home fence the app last had *evidence* for — not a guess.
+ * Which side of the home fence the app last observed — **a readout, not a gate.**
  *
- * Persisted, because it exists to answer a question the native fence asks from a process
- * that is usually dead: "was I outside before this ENTER?". Artur's rule, from live testing
- * 2026-07-28: if the previous position was outside the fence and this one is inside, that is
- * an arrival; anything else is Play Services re-evaluating a fence around a parked car.
+ * It briefly was a gate: an ENTER was refused unless the app had separately seen us leave.
+ * That rule is wrong, and Artur said so the same day (2026-07-28). *Crossing direction is
+ * universal*; requiring corroboration of the departure adds a second, weaker source of truth
+ * that the first one does not need. Turn the phone off at home, drive away with the app dead,
+ * turn it on again already on the way back: nothing observed a departure, the crossing is
+ * still unambiguously inward, and the rule would have refused a real arrival — the exact
+ * failure D13 exists to avoid. `GEOFENCE_TRANSITION_ENTER` *is* the direction; it is trusted.
+ *
+ * What the side is still worth is diagnosis. After a drive, "did Play Services see me leave?"
+ * is a question the Settings row can now answer, and the history of this feature is one of
+ * silent failures that looked identical to each other.
  */
 enum class FenceSide {
-    /** No evidence, or the last fix was too coarse to place us. Never blocks an arrival. */
+    /** Nothing observed, or the last fix was too coarse to place us. See `sideOf`. */
     UNKNOWN,
     INSIDE,
     OUTSIDE,
@@ -108,28 +103,19 @@ enum class FenceSync {
  * them: the native fence delivers into a process that is usually dead, so an in-memory latch
  * on one side would never see the other's announcement.
  *
- * @param requireDeparture whether the caller needs the fence-side check. True only for the
- *   native fence, which carries no memory of where it was. The in-app fence observed both
- *   sides itself before it fired, so applying the rule to it would be asking the same
- *   question twice — and the debug trigger stands in for the native fence from a desk that
- *   is inside the fence, where the rule would refuse every test.
+ * **The cooldown is the only rule here, deliberately.** Both triggers arrive already carrying
+ * a direction — the native fence's ENTER, the in-app fence's observed outward-then-inward
+ * pair — and second-guessing that direction against the recorded [FenceSide] would refuse
+ * real arrivals whenever the app happened not to be running for the departure. See
+ * [FenceSide].
  */
 fun arrivalRefusal(
     status: GeofenceStatus,
     nowMs: Long,
-    requireDeparture: Boolean,
     cooldownMs: Long = GeofenceStatus.ARRIVAL_COOLDOWN_MS,
-    sideTrustMs: Long = GeofenceStatus.SIDE_TRUST_MS,
 ): String? {
     val last = status.lastAnnouncedAtMs
     if (last > 0L && nowMs - last < cooldownMs) return "another pop-up was posted minutes ago"
-
-    if (requireDeparture &&
-        status.side == FenceSide.INSIDE &&
-        nowMs - status.sideAtMs < sideTrustMs
-    ) {
-        return "already inside the fence"
-    }
     return null
 }
 
@@ -172,8 +158,8 @@ fun formatGeofenceStatus(
         }
     }
 
-    // The input to the "you must have been outside" rule, so a refused arrival can be read
-    // back as a consequence rather than as a mystery.
+    // Diagnosis only: "did Play Services see me leave?" is the question a drive that produced
+    // no pop-up leaves behind, and nothing else in the app could answer it.
     if (status.side != FenceSide.UNKNOWN) {
         val where = if (status.side == FenceSide.INSIDE) "inside" else "outside"
         lines += "Last seen: $where the fence ${stamp(status.sideAtMs)}"
