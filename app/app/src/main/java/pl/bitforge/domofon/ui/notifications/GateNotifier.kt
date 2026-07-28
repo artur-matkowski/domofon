@@ -15,6 +15,7 @@ import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.receivers.GateCommandReceiver
 import pl.bitforge.domofon.domain.GateState
 import pl.bitforge.domofon.domain.GeofenceStatus
+import pl.bitforge.domofon.domain.freeNotificationSlot
 import pl.bitforge.domofon.domain.hourMinute
 import pl.bitforge.domofon.domain.hourMinuteAt
 
@@ -31,11 +32,27 @@ import pl.bitforge.domofon.domain.hourMinuteAt
  */
 class GateNotifier {
 
+    /**
+     * A gate movement, on whichever of the two event slots is free.
+     *
+     * The alternation is not cosmetic: `opening` and `opened` are one gate cycle fifteen to
+     * twenty-five seconds apart, and posting the second onto the live id of the first made it
+     * an *update*, which the car host does not draw a heads-up for. See
+     * [freeNotificationSlot] for why two ids rather than a shorter timeout or a cancel.
+     */
     fun notifyStateChange(context: Context, gs: GateState) {
         if (gs.state == GatePolicy.STATE_UNKNOWN) return // disconnect reset, not news
+
+        val slot = freeNotificationSlot(NOTIF_ID_EVENT, NOTIF_ID_EVENT_ALT, liveIds(context))
+        val previous = if (slot == NOTIF_ID_EVENT) NOTIF_ID_EVENT_ALT else NOTIF_ID_EVENT
+
+        // Before the post, not after: the two never overlap in the shade, and cancelling a
+        // *different* id than the one being posted cannot swallow the post.
+        NotificationManagerCompat.from(context).cancel(previous)
+
         post(
             context = context,
-            notifId = NOTIF_ID_EVENT,
+            notifId = slot,
             title = "Gate: ${gs.state}",
             // HH:mm, never the wire timestamp. This printed the raw ISO-8601 string, so a
             // heads-up over Maps read "Changed at 2026-07-27T18:34:12+02:00" — twenty-five
@@ -44,6 +61,25 @@ class GateNotifier {
             state = gs.state,
             timeoutMs = EVENT_TIMEOUT_MS,
         )
+    }
+
+    /**
+     * The ids this app currently has on screen.
+     *
+     * `getActiveNotifications` reports only this app's own notifications and needs no
+     * permission for them. It is a binder call, so it is guarded: on a host where it throws or
+     * the service is gone, an empty set means [notifyStateChange] picks the primary slot,
+     * which is exactly the behaviour that existed before this became two ids.
+     *
+     * Read *before* posting, so the small delay between `notify()` and a notification becoming
+     * visible here cannot matter — what is being asked about is the previous announcement,
+     * which settled seconds ago.
+     */
+    private fun liveIds(context: Context): Set<Int> {
+        val manager = context.getSystemService(NotificationManager::class.java)
+            ?: return emptySet()
+        return runCatching { manager.activeNotifications.map { it.id }.toSet() }
+            .getOrDefault(emptySet())
     }
 
     /**
@@ -85,6 +121,7 @@ class GateNotifier {
     fun clearTransient(context: Context) {
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(NOTIF_ID_EVENT)
+        manager.cancel(NOTIF_ID_EVENT_ALT)
         manager.cancel(NOTIF_ID_GEOFENCE)
     }
 
@@ -191,6 +228,12 @@ class GateNotifier {
 
         /** A third id, so a failure report never overwrites the thing that failed. */
         const val NOTIF_ID_FAILURE = 1003
+
+        /**
+         * The second gate-event slot — not a fourth *kind* of notification, a spare id for the
+         * one kind that repeats faster than it expires. See [freeNotificationSlot].
+         */
+        const val NOTIF_ID_EVENT_ALT = 1004
 
         /** How long an event or failure notification survives untapped. */
         const val EVENT_TIMEOUT_MS = 10L * 60 * 1000

@@ -47,6 +47,7 @@ Ground rules:
 | `domain/HomeFenceCrossingTest` | the in-app fence rule: first reading never fires, inward-only, re-arms on leaving, `reset()`; `sideOf`'s accuracy margin, incl. "a coarse fix cannot manufacture a crossing between two good ones" |
 | `domain/GeofenceStatusTest` | the Settings row's three-failures split, rejection-newer-than-delivery; and the arrival guard — cross-trigger dedup, **a second crossing minutes later still announces**, pop-up-still-on-screen, TTL < window ordering, side never refuses |
 | `domain/StateChangeAnnouncerTest` | the whole notification "whether" table: learning is not news, own-tap silence consumed by one change, surface-visible suppression |
+| `domain/NotificationSlotTest` | the gate event's two ids: an isolated event uses the primary, the second half of a cycle uses the spare, other kinds never displace it, both-live self-heals |
 | `domain/GateTimestampTest` | `HH:mm` from a wire `ts` and from an observed epoch; 24-hour always; the two wire forms and the raw-string fallback |
 | `domain/camera/JpegDataUriTest` | the QML bridge's frame encoding: prefix, round-trip, uniqueness, no line breaks |
 | `domain/config/DomofonConfigParserTest` | trims, clamps, prefix normalisation, tls-port default, wire equality, toString redaction, **camera source + `CameraFeed` resolution** |
@@ -135,6 +136,12 @@ small changes is phone-cold-start + one command + one DHU look.
 **Notifications**
 - [ ] Open the phone app, then the car app, then Settings → **no** heads-up from any of them
 - [ ] Move the gate from the wall button → heads-up on phone and over the DHU; action sends
+- [ ] **The full cycle, Domofon backgrounded on the DHU**: wall button → `Gate: opening` draws a
+      heads-up, and `Gate: opened` twenty seconds later draws **another one**, not just a shade
+      entry. This is the D16 defect; a heads-up on the first and silence on the second means the
+      event id was still occupied. Cycle the gate twice more — every announcement gets one
+- [ ] After that, exactly **one** gate-event entry is in the shade, not two (the old slot is
+      cancelled before the new one posts)
 - [ ] Tap Open in the app → **no** pop-up for `opening`, pop-up for `opened`
 - [ ] Locked phone + requireUnlock → toast refusal; body hidden on the lock screen
 - [ ] Broker unreachable → failure notification after the action

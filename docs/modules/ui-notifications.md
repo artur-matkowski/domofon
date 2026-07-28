@@ -13,6 +13,7 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
 | `GateEventNotifier` | *When*: the **single process-wide** collector of state changes, started once by `DomofonApp` |
 | `domain/StateChangeAnnouncer` | *Whether*: the rule deciding which movements are worth a notification |
 | `GateNotifier` | *How*: a stateless renderer — state-change, arrival, and command-failure notifications |
+| `domain/freeNotificationSlot` | *Where*: which of the gate event's two ids the next announcement goes on, so a repeat is a new notification rather than a silent update |
 | `ui/shared/SurfacePresence` | *Whether, part two*: which Domofon surfaces are in front of the user right now |
 | `receivers/GateCommandReceiver` | The action button's backend: keyguard re-check, dismiss-as-ack, `sendCommandAwait`, failure notification |
 
@@ -42,9 +43,11 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    and the reason `StateChangeAnnouncer` compares command timestamps instead of counting down
    a deadline. `GateService.lastCommandAtMs` is a plain volatile read, not a flow, so it
    cannot lose a race with `gateState` and let the notification through anyway.
-4. **Three fixed notification ids** (event 1001 / arrival 1002 / failure 1003): an arrival
-   pop-up must not silently replace an event, and a failure report must never overwrite
-   the thing that failed.
+4. **Three kinds of notification, four ids** (event 1001 **+ 1004** / arrival 1002 / failure
+   1003): an arrival pop-up must not silently replace an event, and a failure report must never
+   overwrite the thing that failed. 1004 is not a fourth kind — it is the gate event's **second
+   slot**, and `domain/freeNotificationSlot` picks whichever of the pair is not currently on
+   screen, cancelling the other first. See invariant 15.
 
 5. **The action button carries `GatePolicy.primaryAction`** — the same call every surface
    makes, so the notification can never contradict the car screen. The arrival
@@ -108,6 +111,25 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    renders is when the crossing was *detected* — not when the notification was built, which is
    up to 9.5 s later while the flow waits for fresh gate state. With a 30-second pop-up life the
    time is what tells the driver "this is the arrival happening now", not one already ignored.
+15. **A gate event alternates between two ids, because a gate cycle is two announcements.**
+   Press the wall button and the gate reports `opening`, then `opened` fifteen to twenty-five
+   seconds later. Both are news and both are announced — and the second used to land on the
+   still-live id of the first, making it an *update*, which the car host draws no heads-up for.
+   So the heads-up saying the gate had **finished moving**, the one actually worth having, was
+   dropped on every single cycle. `domain/freeNotificationSlot` picks whichever of 1001/1004 is
+   not in `NotificationManager.getActiveNotifications()`, and the other is cancelled *before*
+   the post so the two never overlap in the shade.
+
+   Two things this is deliberately **not**. It is not a shorter `EVENT_TIMEOUT_MS`: that would
+   have to sit under a gate travel time nobody can predict, and guessing low makes the
+   notification vanish while the driver is reaching for it. And it is not cancel-then-repost
+   onto one id: against the *same* id the cancel can land after the notify and swallow it,
+   whereas cancelling a *different* id cannot affect the post at all, in any order. That
+   asymmetry is the entire reason this is two ids rather than a retry. (D16.)
+
+   `getActiveNotifications` returns only this app's own notifications and needs no permission;
+   the call is guarded, and an empty result simply means the primary slot is used — the exact
+   behaviour that existed when there was one id.
 
 ## Channels
 

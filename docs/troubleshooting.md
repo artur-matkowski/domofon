@@ -450,6 +450,22 @@ append-only history — entries are never rewritten to match later refactors.
   Settings → Notifications, that Domofon is permitted. A disabled toggle there gives exactly
   the "no pop-up over Maps" symptom.
 
+- **Symptom**: the gate is opened from the wall button; a heads-up says `Gate: opening` over
+  Maps, and then **nothing** when it finishes — `Gate: opened` only ever appears as a shade
+  entry. Same for any second gate movement inside ten minutes.
+  **Cause**: the same update-is-not-a-heads-up fact as the arrival entry above, but time cannot
+  fix this one. A gate cycle is *two* announcements fifteen to twenty-five seconds apart, and
+  the second landed on id 1001 while the first was still live (`EVENT_TIMEOUT_MS` is 10 min).
+  An update changes the shade entry and draws nothing.
+  **Fix** (D16): a second event id, 1004, and `domain/freeNotificationSlot` picks whichever of
+  the pair is not in `NotificationManager.getActiveNotifications()`, cancelling the other
+  first. **Do not** "fix" this by shortening `EVENT_TIMEOUT_MS` — it would have to be under a
+  travel time nobody can predict — and do not cancel-then-repost onto 1001, for the reason in
+  the arrival entry. Cancelling a *different* id than the one being posted is what makes this
+  safe where a same-id cancel is a race.
+  **If a state change stops appearing at all**, check `clearTransient`: it must cancel **both**
+  1001 and 1004, or one slot stays occupied forever and every other announcement is an update.
+
 - **Symptom**: a heads-up pops over the Domofon car screen itself, announcing a state that
   screen is already displaying next to a button that acts on it. (Artur, 2026-07-28.)
   **Cause**: `GateNotifier` was context-blind — nothing in the app tracked whether a Domofon

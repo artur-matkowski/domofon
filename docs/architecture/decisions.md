@@ -295,6 +295,51 @@ exactly one pop-up" **inverts**: two pop-ups is now the correct outcome.
 
 **Status:** active. See [modules/geo.md](../modules/geo.md) invariant 8.
 
+## D16 — A repeating notification alternates between two ids
+
+**Context.** D14 point 2 and D15 both work around the same platform fact: `notify()` onto an id
+that still holds a live notification is an **update**, and the Android Auto host draws no
+heads-up for an update — it changes the shade entry and says nothing. For the arrival pop-up
+that is solved by time (the pop-up expires long before another arrival may be announced).
+
+For **gate state changes** it cannot be, and the reason is structural rather than a matter of
+picking a better number. One gate cycle is *two* announcements: press the wall button and the
+gate reports `opening`, then `opened` fifteen to twenty-five seconds later. Both are news,
+`StateChangeAnnouncer` announces both, and the second landed on the still-live id of the first.
+So the heads-up saying the gate had **finished moving** — the one a driver actually wants — was
+being dropped on every single cycle, and had been since notifications existed.
+
+**Decision.** The gate event gets a **second id (1004)**, and `domain/freeNotificationSlot`
+picks whichever of the pair is not currently in `NotificationManager.getActiveNotifications()`.
+The other is cancelled *before* the post, so the two never overlap in the shade. An isolated
+event still lands on 1001, so nothing observable changes in the common case.
+
+**Why not the two obvious alternatives.**
+
+- *A shorter `EVENT_TIMEOUT_MS`.* It would have to sit under a gate travel time that is not
+  predictable, and guessing low trades a missing heads-up for a notification that disappears
+  while the driver is reaching for it. Time cannot solve this one; it only solved the arrival
+  because two arrivals are minutes apart by nature.
+- *Cancel, then re-post onto one id.* Rejected in D14 point 2 and still rejected: against the
+  **same** id, `cancel` and `notify` are asynchronous and the cancel can land after the notify
+  and swallow it. Against **different** ids there is no such interaction — cancelling the old
+  slot cannot affect the post to the new one in any ordering. That asymmetry is precisely what
+  makes two ids a fix and one id a race.
+
+**Consequences.** Four ids for three kinds of notification, which is worth stating plainly
+because "one id per kind" was the old invariant. `clearTransient` cancels both event slots.
+Both slots live at once is only reachable if a cancel is lost; that posts one update and then
+self-heals, and a unit test pins it. The `getActiveNotifications` call is guarded — on a host
+where it fails, the primary slot is used and the behaviour is exactly what it was before.
+
+**Not done here:** the **failure** notification (1003) has the same shape — two failed commands
+inside its 10-minute timeout give one heads-up and one silent update — and invariant 7 says it
+must be loud. Left alone deliberately rather than by oversight; it is a smaller window and a
+rarer sequence, and widening this change to it was not asked for.
+
+**Status:** active. See [modules/ui-notifications.md](../modules/ui-notifications.md)
+invariant 15.
+
 ---
 
 ## Accepted residual risks
