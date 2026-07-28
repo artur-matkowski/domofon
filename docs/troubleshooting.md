@@ -431,6 +431,42 @@ append-only history — entries are never rewritten to match later refactors.
   news; and a command silences the next state change (only the next, consumed by it) so your
   own tap does not announce the `opening` you caused.
 
+- **Symptom**: the *second* arrival pop-up of the day never draws a heads-up over Maps — it
+  appears in the shade and nowhere else. Related: getting into the car in the morning, the
+  phone is already showing "Approaching home" while the car has not moved. (Artur, 2026-07-28.)
+  **Cause**: one cause, both symptoms. The arrival notification carried `setAutoCancel(true)`
+  and nothing else, and `setAutoCancel` fires only on a **tap** — so an ignored pop-up stayed
+  in the shade indefinitely. That is the stale "Approaching home"; and because id 1002 was
+  still live, the next `notify(1002, …)` was an **update** of an existing notification rather
+  than a new one, which the car host does not draw a heads-up for.
+  **Fix**: `setTimeoutAfter` on all three notifications — arrival 5 min, event and failure
+  10 min — plus `GateNotifier.clearTransient` when a Domofon surface comes to the front. The
+  arrival timeout is deliberately shorter than the 10-minute arrival cooldown, so the id is
+  always free by the time another arrival is permitted. **Do not** "fix" this by cancelling
+  immediately before re-posting: `cancel` and `notify` are asynchronous and the notify can be
+  swallowed, which trades a missing heads-up for a missing notification.
+  **Still worth checking on the device**, because no app-side change reaches it: Android Auto →
+  Settings → Notifications, that Domofon is permitted. A disabled toggle there gives exactly
+  the "no pop-up over Maps" symptom.
+
+- **Symptom**: a heads-up pops over the Domofon car screen itself, announcing a state that
+  screen is already displaying next to a button that acts on it. (Artur, 2026-07-28.)
+  **Cause**: `GateNotifier` was context-blind — nothing in the app tracked whether a Domofon
+  surface was in front of the user, so there was no way to ask.
+  **Fix**: `ui/shared/SurfacePresence`, written from `CarGateSession`'s lifecycle observer and
+  `MainActivity.onStart`/`onStop`, read by `StateChangeAnnouncer` (rule 3) and `ArrivalFlow`.
+  Command failures are exempt. See [ui-notifications](modules/ui-notifications.md) invariant 12
+  and [D14](architecture/decisions.md). If notifications ever go *permanently* silent, suspect
+  a stuck flag first — which is why `MainActivity.onStop` clears it before every early return.
+
+- **Symptom**: notification body reads `Changed at 2026-07-27T18:34:12+02:00`. (Artur,
+  2026-07-28.)
+  **Cause**: `GateState.changedAt` is the `ts` string exactly as the bridge published it, and
+  `GateNotifier` printed it.
+  **Fix**: `domain/GateTimestamp.hourMinute` → `Changed at 18:34`. Fixed 24-hour pattern, not
+  a locale short-time format (12-hour in several locales). That file is now also the single
+  wire-timestamp parser; `GateProtocol` calls it.
+
 - **Symptom**: `Close gate` never appears while the gate is `opening`; the one button on the
   car screen and the notification both offer `Open gate`, which does nothing. (Artur,
   2026-07-27.)
@@ -505,6 +541,25 @@ append-only history — entries are never rewritten to match later refactors.
   to follow.
   **Fix**: `sync()` from `CarGateSession.onCreateScreen`, and `MY_PACKAGE_REPLACED` added to
   `BootReceiver`.
+
+- **Symptom**: "Approaching home" fires while the car is parked on its own driveway — typically
+  just after starting the app or the car session. (Artur, 2026-07-28.)
+  **Cause**: two, and the status row tells them apart. If `Last pop-up … (Play Services)`:
+  Play Services re-evaluating the fence after `sync()` re-registered it. `setInitialTrigger(0)`
+  does not prevent this — a re-added fence has no tracked state, and the first evaluation
+  inside the region can be delivered as an ENTER. Nothing in the app remembered it had never
+  left, so it believed the delivery. If `(in-app)`: a cold cell-derived fix landing kilometres
+  off, followed by a good one, which under a bare `meters <= radius` is a textbook
+  outside→inside crossing.
+  **Fix**: [geo](modules/geo.md) invariants 8 and 9 — a persisted `FenceSide` (with
+  `GEOFENCE_TRANSITION_EXIT` now registered so leaving is recorded even with the app dead), and
+  `sideOf`, which refuses to claim a side when the fix's own accuracy spans the fence. Read
+  Settings → *Arrival trigger status*: `Last seen: inside the fence <ts>` is the evidence, and
+  `Last event ignored: already inside the fence` is the rule firing.
+  **If the opposite happens** — a real arrival is refused with `already inside the fence` — the
+  app never saw you leave. That is Play Services dropping the EXIT; the 12 h `SIDE_TRUST_MS`
+  window releases it after a while, and the timestamp on the `Last seen` line says how stale
+  the belief was.
 
 - **Symptom**: fires very late.
   **Fix**: larger radius (300–500 m); `setNotificationResponsiveness` is 0 since 2026-07-27

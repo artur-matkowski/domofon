@@ -136,6 +136,16 @@ small changes is phone-cold-start + one command + one DHU look.
 - [ ] Broker unreachable → failure notification after the action
 - [ ] **Exactly one** notification per state change with phone *and* car open
 - [ ] No "Gate watcher" channel remains in the app's notification settings
+- [ ] Notification body reads `Changed at HH:MM` — no date, no offset, 24-hour
+- [ ] **Domofon in front on the head unit** → move the gate from the wall button → **no**
+      heads-up at all. Switch to Maps, move it again → heads-up appears. Same on the phone
+      with the app in front vs. backgrounded
+- [ ] Settings open (phone) is **not** a suppressing surface → a wall-button move still
+      notifies
+- [ ] Broker unreachable, Domofon in front on the head unit → the **failure** notification
+      still appears (it answers a button you pressed)
+- [ ] Leave a notification untapped → it is gone from the shade within 10 min (5 for an
+      arrival); opening the app clears the event and arrival ones immediately
 
 **Geofence**
 - [ ] `DebugGeofenceTrigger` → arrival pop-up with fresh state within ~7 s, and Settings →
@@ -154,6 +164,21 @@ small changes is phone-cold-start + one command + one DHU look.
       which is the diagnosis the failing drive could not produce.
 - [ ] On the car screen during that drive: the distance line ticks down and carries its
       `next ≤Ns` cadence
+- [ ] **Fire the debug trigger twice ~6 minutes apart with Domofon backgrounded** → the second
+      one draws a *fresh* heads-up over the DHU, not just a shade entry. This is the "second
+      pop-up never appeared" defect; a heads-up on the first and silence on the second means
+      the notification id was still occupied
+- [ ] **Get into the car at home** with the app freshly started → **no** "Approaching home".
+      Settings → "Arrival trigger status" reads `Last seen: inside the fence <ts>`, and if
+      Play Services delivered anyway, `Last event ignored: already inside the fence <ts>`
+- [ ] On the real drive, **on the way out**: the status row flips to `Last seen: outside the
+      fence` — that is the newly registered `GEOFENCE_TRANSITION_EXIT` arriving, and the
+      departure rule has nothing to work with without it
+- [ ] Arrive with Domofon in front on the head unit → no pop-up, status row says
+      `Last event ignored: a Domofon screen was in front`, and the *next* arrival is still
+      allowed (a suppressed pop-up must not consume the cooldown)
+- [ ] Android Auto → Settings → Notifications: Domofon is permitted. Not an app-side setting;
+      a disabled toggle here looks exactly like a broken pop-up
 
 **Release build** (mandatory after class moves/renames — R8 + reflective Qt/Netty)
 - [ ] `scripts/build-release.sh --dry-run` artifact side-loaded: the whole phone list above

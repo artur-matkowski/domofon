@@ -192,6 +192,50 @@ visible car screen — which is still strictly more than before.
 
 **Status:** active. See [modules/geo.md](../modules/geo.md).
 
+### D14 — Notifications are silent while a Domofon surface is in front, and an arrival must be preceded by a departure
+
+**Context (Artur, live testing 2026-07-28).** Four complaints from one drive: a heads-up
+fired over the Domofon car screen itself; the body carried a full ISO-8601 timestamp; a second
+arrival pop-up never drew a heads-up over Maps; and "Approaching home" was on the screen of a
+car parked on its own driveway. The last two share a root cause — an untapped notification is
+cancelled only by a tap, so it sat in the shade overnight, and the next `notify()` onto the
+same id was an *update*, which the car host does not draw a heads-up for.
+
+**Decision.**
+
+1. **Suppress while visible, on two surfaces.** The car screen (Android Auto `Session`
+   STARTED) and `MainActivity`. Not Settings — it shows configuration, not gate state, so a
+   notification is still the only thing telling the user the gate moved. State-change and
+   arrival notifications only; the command-failure notification stays, because it answers a
+   button the user pressed. Full-suppression rather than "post it without the `CarAppExtender`"
+   was Artur's call: while driving, a shade entry nobody will read is not worth having.
+2. **Notifications expire** (arrival 5 min, event and failure 10 min) and are cleared when a
+   surface comes to the front. The arrival timeout is under the 10-minute arrival cooldown on
+   purpose, so the next arrival always lands on an empty id and counts as new. *Not* by
+   cancelling before re-posting: `cancel` and `notify` are asynchronous and the notify can be
+   swallowed.
+3. **An ENTER with no evidence of a departure is not an arrival.** Artur's rule, in his words:
+   "if my previous position was outside the fence, and now I am inside it, then I am arriving."
+   Implemented as a persisted `FenceSide` — hence `GEOFENCE_TRANSITION_EXIT` is now registered,
+   because it is the only evidence that survives the app being dead for a whole trip. Applies
+   to the native fence only; the in-app fence and the debug trigger observed the crossing
+   themselves.
+
+**Consequences.** `SurfacePresence` is a new process-wide singleton in `AppContainer`, and the
+notification path acquires its first dependency on UI lifecycle. Play Services now wakes the
+receiver once more per trip (the EXIT). `HomeDistanceTracker` records the fence side on every
+confident fix whether or not the in-app fence is switched on, because the *native* fence is
+what needs the evidence.
+
+**Accepted trade-off.** Trust in a recorded `INSIDE` expires after 12 h (`SIDE_TRUST_MS`),
+after which an ENTER is allowed through. Without the expiry, one dropped EXIT would silence
+the arrival pop-up permanently — which is precisely the failure the 10 km round trip of
+2026-07-27 already cost (D13). A redundant pop-up is the cheaper mistake, and the Settings
+status row names whichever one happened.
+
+**Rejected:** gating arrivals on Activity Recognition or a car-connection signal. Both add a
+permission or a dependency to answer a question a persisted fence side answers for free.
+
 ---
 
 ## Accepted residual risks
