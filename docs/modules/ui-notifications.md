@@ -13,6 +13,7 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
 | `GateEventNotifier` | *When*: the **single process-wide** collector of state changes, started once by `DomofonApp` |
 | `domain/StateChangeAnnouncer` | *Whether*: the rule deciding which movements are worth a notification |
 | `GateNotifier` | *How*: a stateless renderer — state-change, arrival, and command-failure notifications |
+| `ui/shared/SurfacePresence` | *Whether, part two*: which Domofon surfaces are in front of the user right now |
 | `receivers/GateCommandReceiver` | The action button's backend: keyguard re-check, dismiss-as-ack, `sendCommandAwait`, failure notification |
 
 ## Invariants
@@ -44,6 +45,7 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
 4. **Three fixed notification ids** (event 1001 / arrival 1002 / failure 1003): an arrival
    pop-up must not silently replace an event, and a failure report must never overwrite
    the thing that failed.
+
 5. **The action button carries `GatePolicy.primaryAction`** — the same call every surface
    makes, so the notification can never contradict the car screen. The arrival
    notification gets an action only when state is known; with no state, offering the wrong
@@ -65,6 +67,37 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    of whichever intent was built first get silently reused for both buttons.
 11. **Receiver work is bounded (9.5 s) on the container's appScope** — inside goAsync's
    ~10 s budget, no ad-hoc scopes.
+12. **Nothing is announced to a surface that is already showing it.** While the car screen is
+   the visible app on the head unit, or `MainActivity` is between `onStart` and `onStop`,
+   state-change and arrival notifications are suppressed — `ui/shared/SurfacePresence` is the
+   flag, `StateChangeAnnouncer` rule 3 and `ArrivalFlow` are its two readers. That screen
+   already carries the state and the button a heads-up would be duplicating, and on the head
+   unit it covers the very screen the driver chose. Three consequences worth stating:
+   **Settings is deliberately not a suppressing surface** (it shows configuration, not gate
+   state); **the command-failure notification is exempt**, because it answers a button the
+   user pressed and invariant 7 keeps it loud; and **a suppressed arrival does not consume the
+   cooldown**, since a pop-up we chose not to draw must not spend the budget for the next real
+   one. Suppression lifts on the next change, so backgrounding to Maps re-arms notifications
+   immediately. `MainActivity.onStop` clears its flag *before every early return* — a stuck
+   "visible" would silence the app for the life of the process, the one failure this feature
+   must not be able to cause. (Artur, live testing 2026-07-28.)
+13. **Notifications expire, and clear when you open the app.** `setAutoCancel(true)` fires
+   only on a *tap*, so anything the user ignored used to sit in the shade for good. Getting
+   into the car the next morning therefore showed yesterday's "Approaching home" — and, worse,
+   made the *next* arrival a `notify()` onto a live id, i.e. an **update**, which the car host
+   does not draw a heads-up for. So: `setTimeoutAfter` on all three (arrival 5 min, event and
+   failure 10 min) plus `GateNotifier.clearTransient` (1001 + 1002) when a surface comes to the
+   front. The arrival timeout is deliberately **shorter than the 10-minute arrival cooldown**;
+   that gap is what guarantees the slot is empty by the time another arrival is allowed.
+   Cancelling immediately before re-posting looks like the same fix and is not — `cancel` and
+   `notify` are asynchronous, and the notify can be swallowed, trading a missing heads-up for
+   a missing notification. (Artur, live testing 2026-07-28.)
+14. **A notification renders `HH:mm`, never a wire timestamp.** `GateState.changedAt` is the
+   raw ISO-8601 `ts` the bridge published, and printing it verbatim gave a driver
+   `Changed at 2026-07-27T18:34:12+02:00` to read at speed. `domain/GateTimestamp.hourMinute`
+   is the one renderer — a fixed 24-hour pattern, **not** a locale short-time format, which is
+   12-hour in several locales. That file also owns the *only* wire-timestamp parser;
+   `GateProtocol` calls it rather than keeping its own.
 
 ## Channels
 

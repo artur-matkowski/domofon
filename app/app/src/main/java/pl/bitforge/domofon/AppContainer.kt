@@ -20,6 +20,7 @@ import pl.bitforge.domofon.domain.GeofenceStatus
 import pl.bitforge.domofon.receivers.ArrivalFlow
 import pl.bitforge.domofon.ui.notifications.GateEventNotifier
 import pl.bitforge.domofon.ui.shared.GateViewModel
+import pl.bitforge.domofon.ui.shared.SurfacePresence
 
 /**
  * The composition root — the one place that constructs and wires the app's objects.
@@ -67,8 +68,16 @@ class AppContainer(app: Application) : AutoCloseable {
     /** Stateless notification renderer; *when* to post is its callers' business. */
     val gateNotifier = GateNotifier()
 
+    /**
+     * Which Domofon surfaces are in front of the user. A singleton because it is the
+     * *process's* answer: the car session writes it, the phone activity writes it, and the
+     * notification path — which belongs to neither — reads it.
+     */
+    val surfaces = SurfacePresence()
+
     /** The single state-change→notification collector; started once by [DomofonApp]. */
-    val gateEventNotifier = GateEventNotifier(app, gateService, gateNotifier, appScope)
+    val gateEventNotifier =
+        GateEventNotifier(app, gateService, gateNotifier, surfaces, appScope)
 
     init {
         // Upgrade hygiene, once per process and cheap. Frames used to reach QML as a pair of

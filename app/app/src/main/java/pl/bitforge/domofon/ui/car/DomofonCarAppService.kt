@@ -90,15 +90,26 @@ class CarGateSession : Session() {
                     grabber.start()
                     // start() is a no-op when already running, so this is safe either way.
                     distanceTracker.start()
+                    // STARTED is precisely "Domofon is the app on the head unit" — the same
+                    // signal the grabber already keys off. While it holds, notifications are
+                    // suppressed: this screen shows the state and the button a heads-up would
+                    // be duplicating, and drawing one over it covers the screen the driver
+                    // chose. Anything still in the shade is stale by the same argument.
+                    carContext.container.surfaces.carScreen(true)
+                    carContext.container.gateNotifier.clearTransient(carContext)
                 }
                 override fun onStop(owner: LifecycleOwner) {
                     grabber.stop()
                     if (!fenceFollowsSession) distanceTracker.stop()
+                    // Backgrounded to Maps: notifications are the only way to reach the
+                    // driver again, so they must come back on immediately.
+                    carContext.container.surfaces.carScreen(false)
                 }
                 override fun onDestroy(owner: LifecycleOwner) {
                     // Unconditional: whatever start()ed it, the session ending is the end of
                     // it. stop() is idempotent.
                     distanceTracker.stop()
+                    carContext.container.surfaces.carScreen(false)
                     lease?.close()
                     lease = null
                 }

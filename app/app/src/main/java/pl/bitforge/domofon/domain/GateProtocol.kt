@@ -4,8 +4,6 @@ import org.json.JSONException
 import org.json.JSONObject
 import pl.bitforge.domofon.domain.config.DomofonConfig
 import java.time.Instant
-import java.time.OffsetDateTime
-import java.time.format.DateTimeParseException
 
 /** One MQTT subscription: a concrete topic and the QoS to request for it. */
 data class Subscription(val topic: String, val qos: Int)
@@ -21,7 +19,10 @@ sealed interface GateEvent {
         /** UI vocabulary ("opened", "closing", …), already mapped from the signal name. */
         val state: String,
         val ts: Instant,
-        /** The timestamp as published — [GateState.changedAt] renders it verbatim. */
+        /**
+         * The timestamp as published; [GateState.changedAt] carries it verbatim. Surfaces
+         * render it through [hourMinute] rather than printing it — see [GateTimestamp.kt].
+         */
         val rawTs: String,
         /**
          * Retained replays prove nothing about the bridge being alive and lose timestamp
@@ -69,7 +70,7 @@ class GateProtocol(private val topics: DomofonConfig.Topics) {
         } catch (e: JSONException) {
             return GateEvent.Ignored("rx payload is not JSON: $topic")
         }
-        val ts = parseTs(rawTs)
+        val ts = parseWireTimestamp(rawTs)
             ?: return GateEvent.Ignored("rx $topic has unparseable ts '$rawTs'")
 
         return GateEvent.Signal(state, ts, rawTs, retained)
@@ -92,19 +93,6 @@ class GateProtocol(private val topics: DomofonConfig.Topics) {
     }
 
     data class Command(val topic: String, val payload: String)
-
-    private fun parseTs(raw: String): Instant? {
-        if (raw.isEmpty()) return null
-        return try {
-            OffsetDateTime.parse(raw).toInstant()
-        } catch (e: DateTimeParseException) {
-            try {
-                Instant.parse(raw)
-            } catch (e2: DateTimeParseException) {
-                null
-            }
-        }
-    }
 
     companion object {
         /**

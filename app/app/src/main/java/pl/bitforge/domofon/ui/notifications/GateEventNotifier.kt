@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.domain.StateChangeAnnouncer
+import pl.bitforge.domofon.ui.shared.SurfacePresence
 
 /**
  * The single process-wide collector that turns gate-state changes into notifications.
@@ -27,6 +28,7 @@ class GateEventNotifier(
     context: Context,
     private val gate: GateService,
     private val notifier: GateNotifier,
+    private val surfaces: SurfacePresence,
     private val scope: CoroutineScope,
 ) {
 
@@ -44,6 +46,9 @@ class GateEventNotifier(
                     state = it.state,
                     lastCommandAtMs = gate.lastCommandAtMs,
                     nowMs = System.currentTimeMillis(),
+                    // Read here, not in the notifier: this class owns *when*, and the
+                    // notifier stays a stateless renderer.
+                    surfaceVisible = surfaces.anyVisible,
                 )
                 if (announce) notifier.notifyStateChange(appContext, it)
             }

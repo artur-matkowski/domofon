@@ -204,10 +204,18 @@ class MainActivity : AppCompatActivity(), QtQmlStatusChangeListener {
         // Re-evaluates the feature/permission guards, so enabling the geofence in Settings and
         // coming back starts the readout without a relaunch.
         homeDistanceTracker.start()
+        // The gate screen is in front, so it is already showing every state a heads-up would
+        // announce — and anything left in the shade is about to be contradicted by it.
+        container.surfaces.phoneScreen(true)
+        container.gateNotifier.clearTransient(this)
         maybeRequestNotifications()
     }
 
     override fun onStop() {
+        // Unconditionally, and before every early return: a stuck "visible" would silence
+        // every notification for the life of the process, which is the one failure this
+        // suppression must not be able to cause.
+        container.surfaces.phoneScreen(false)
         if (!hostingQt) {
             super.onStop()
             return

@@ -14,6 +14,7 @@ import pl.bitforge.domofon.R
 import pl.bitforge.domofon.domain.GatePolicy
 import pl.bitforge.domofon.receivers.GateCommandReceiver
 import pl.bitforge.domofon.domain.GateState
+import pl.bitforge.domofon.domain.hourMinute
 
 /**
  * Renders gate state into heads-up notifications — a stateless renderer; *when* to post is
@@ -34,8 +35,12 @@ class GateNotifier {
             context = context,
             notifId = NOTIF_ID_EVENT,
             title = "Gate: ${gs.state}",
-            text = "Changed at ${gs.changedAt}",
+            // HH:mm, never the wire timestamp. This printed the raw ISO-8601 string, so a
+            // heads-up over Maps read "Changed at 2026-07-27T18:34:12+02:00" — twenty-five
+            // characters for a driver who has time for four.
+            text = "Changed at ${hourMinute(gs.changedAt)}",
             state = gs.state,
+            timeoutMs = EVENT_TIMEOUT_MS,
         )
     }
 
@@ -51,7 +56,26 @@ class GateNotifier {
             // With no state we do not know which action is right, and offering the wrong
             // one at 60 km/h is worse than offering none.
             withAction = gs != null,
+            timeoutMs = ARRIVAL_TIMEOUT_MS,
         )
+    }
+
+    /**
+     * Drop the event and arrival notifications — the user is now looking at the real thing.
+     *
+     * Called when a surface comes to the front. Not just tidiness: an untapped arrival pop-up
+     * used to sit in the shade indefinitely, so getting into the car the next morning showed
+     * "Approaching home" from yesterday's drive, and the *next* arrival was an update of a
+     * live notification rather than a new one — which the car host does not draw a heads-up
+     * for (Artur, live testing 2026-07-28).
+     *
+     * The failure notification (1003) is deliberately left alone: it is the answer to a
+     * button the user pressed, and invariant 7 keeps it loud.
+     */
+    fun clearTransient(context: Context) {
+        val manager = NotificationManagerCompat.from(context)
+        manager.cancel(NOTIF_ID_EVENT)
+        manager.cancel(NOTIF_ID_GEOFENCE)
     }
 
     /**
@@ -72,6 +96,7 @@ class GateNotifier {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(openApp(context, NOTIF_ID_FAILURE))
             .setAutoCancel(true)
+            .setTimeoutAfter(EVENT_TIMEOUT_MS)
 
         manager.notify(NOTIF_ID_FAILURE, builder.extend(CarAppExtender.Builder().build()).build())
     }
@@ -91,6 +116,7 @@ class GateNotifier {
         title: String,
         text: String,
         state: String,
+        timeoutMs: Long,
         withAction: Boolean = true,
     ) {
         val manager = NotificationManagerCompat.from(context)
@@ -110,6 +136,10 @@ class GateNotifier {
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setContentIntent(open)
             .setAutoCancel(true)
+            // `setAutoCancel` only fires on a *tap*, so without this every notification the
+            // user ignored stayed in the shade for good. These announce an event, not a
+            // standing status — the app is where current state is read.
+            .setTimeoutAfter(timeoutMs)
             // On a locked phone the full text is hidden. "Approaching home — gate: opened"
             // on a lock screen tells anyone standing near it both that the owner is on the
             // way home and that the gate is currently open.
@@ -151,5 +181,24 @@ class GateNotifier {
 
         /** A third id, so a failure report never overwrites the thing that failed. */
         const val NOTIF_ID_FAILURE = 1003
+
+        /** How long an event or failure notification survives untapped. */
+        const val EVENT_TIMEOUT_MS = 10L * 60 * 1000
+
+        /**
+         * How long an arrival pop-up survives untapped — deliberately **shorter** than
+         * [pl.bitforge.domofon.domain.GeofenceStatus.ARRIVAL_COOLDOWN_MS].
+         *
+         * That gap is what makes the next arrival work. Reposting to an id that still holds a
+         * live notification is an *update*, and the car host does not draw a heads-up for an
+         * update — so the second arrival of the day appeared silently in the shade and never
+         * over Maps. With the slot guaranteed empty by the time the cooldown allows another
+         * one, every arrival pop-up is a genuinely new notification.
+         *
+         * Cancelling immediately before re-posting would look like the same fix and is not:
+         * `cancel` and `notify` are asynchronous and the notify can be swallowed, which
+         * trades a missing heads-up for a missing notification.
+         */
+        const val ARRIVAL_TIMEOUT_MS = 5L * 60 * 1000
     }
 }
