@@ -21,7 +21,9 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import pl.bitforge.domofon.data.config.ConfigStore
+import pl.bitforge.domofon.domain.FenceSide
 import pl.bitforge.domofon.domain.HomeFenceCrossing
+import pl.bitforge.domofon.domain.sideOf
 import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -139,7 +141,7 @@ class HomeDistanceTracker(
     private fun fenceFor(radiusMeters: Float): HomeFenceCrossing {
         val existing = crossing
         if (existing != null && crossingRadius == radiusMeters) return existing
-        return HomeFenceCrossing(radiusMeters).also {
+        return HomeFenceCrossing().also {
             crossing = it
             crossingRadius = radiusMeters
         }
@@ -177,11 +179,21 @@ class HomeDistanceTracker(
             val next = nextDelayMs(meters, fix)
             _distance.value = Reading(meters, next)
 
+            // Which side of the fence this fix can actually prove we are on. A fix with no
+            // accuracy at all proves nothing, so it is given an accuracy that guarantees
+            // UNKNOWN rather than being trusted by default.
+            val accuracy = if (fix.hasAccuracy()) fix.accuracy else Float.MAX_VALUE
+            val side = sideOf(meters, accuracy, home.radiusMeters)
+
+            // Recorded whether or not the in-app fence is switched on: this is the app's
+            // cheapest evidence that it left, and the *native* fence is the one that needs it.
+            if (side != FenceSide.UNKNOWN) status.recordSide(side)
+
             // The opt-in in-app fence, evaluated on the same readings that feed the readout.
             // Beside the Play Services fence, never instead of it: this one only runs while a
             // surface is alive, but it is the only one whose evaluation the app can observe.
             if (home.inAppFence) {
-                if (fenceFor(home.radiusMeters).onReading(meters)) {
+                if (fenceFor(home.radiusMeters).onReading(side)) {
                     Log.i(TAG, "in-app fence: crossed inward")
                     status.recordInAppCrossing()
                     onArrival()

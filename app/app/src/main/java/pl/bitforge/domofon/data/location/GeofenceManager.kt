@@ -79,7 +79,14 @@ class GeofenceManager(
             .setRequestId(ID)
             .setCircularRegion(home.latitude!!, home.longitude!!, home.radiusMeters)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
-            .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
+            // EXIT alongside ENTER, and it never pops anything up. It is the only evidence of
+            // having left that survives the app being dead for the whole trip, and
+            // [arrivalRefusal] needs that evidence: without it an ENTER delivered while the
+            // car is parked on the driveway is indistinguishable from one delivered on the
+            // way home. Costs one extra receiver wake per trip.
+            .setTransitionTypes(
+                Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT
+            )
             // 0 = "tell me as soon as you know". This was 30 s, which sounded battery-cheap
             // and is most of a kilometre at road speed — on a 2 km fence that is a large
             // fraction of the warning the pop-up exists to give. The value is only a *hint*

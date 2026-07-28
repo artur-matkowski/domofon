@@ -2,6 +2,7 @@ package pl.bitforge.domofon.data.location
 
 import android.content.Context
 import android.content.SharedPreferences
+import pl.bitforge.domofon.domain.FenceSide
 import pl.bitforge.domofon.domain.FenceSync
 import pl.bitforge.domofon.domain.GeofenceStatus
 
@@ -37,7 +38,26 @@ class GeofenceStatusStore(context: Context) {
             lastAnnouncedBy = prefs.getString(ANNOUNCED_BY, "").orEmpty(),
             lastRejection = prefs.getString(REJECTION, "").orEmpty(),
             lastRejectionAtMs = prefs.getLong(REJECTION_AT, 0L),
+            side = runCatching { FenceSide.valueOf(prefs.getString(SIDE, "")!!) }
+                .getOrDefault(FenceSide.UNKNOWN),
+            sideAtMs = prefs.getLong(SIDE_AT, 0L),
         )
+
+    /**
+     * Which side of the fence we now have evidence for.
+     *
+     * **Only writes when the side actually changes.** The distance tracker calls this on every
+     * fix, and its cadence floor is 10 s — rewriting the same value all the way home would be
+     * a prefs commit per fix for no information. The timestamp therefore means "since when",
+     * which is exactly what [GeofenceStatus.SIDE_TRUST_MS] wants to measure.
+     */
+    fun recordSide(side: FenceSide, atMs: Long = System.currentTimeMillis()) {
+        if (current.side == side) return
+        prefs.edit()
+            .putString(SIDE, side.name)
+            .putLong(SIDE_AT, atMs)
+            .apply()
+    }
 
     fun recordSync(result: FenceSync, detail: String = "", atMs: Long = System.currentTimeMillis()) {
         prefs.edit()
@@ -82,5 +102,7 @@ class GeofenceStatusStore(context: Context) {
         const val ANNOUNCED_BY = "announcedBy"
         const val REJECTION = "rejection"
         const val REJECTION_AT = "rejectionAt"
+        const val SIDE = "side"
+        const val SIDE_AT = "sideAt"
     }
 }

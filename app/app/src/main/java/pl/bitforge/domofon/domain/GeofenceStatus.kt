@@ -36,6 +36,9 @@ data class GeofenceStatus(
     /** Why the most recent delivery was thrown away, if one was. */
     val lastRejection: String = "",
     val lastRejectionAtMs: Long = 0L,
+    /** Which side of the fence the app last had evidence for. See [FenceSide]. */
+    val side: FenceSide = FenceSide.UNKNOWN,
+    val sideAtMs: Long = 0L,
 ) {
     companion object {
         const val SOURCE_NATIVE = "Play Services"
@@ -49,7 +52,34 @@ data class GeofenceStatus(
          * comfortably longer than the two can disagree by and far shorter than a round trip.
          */
         const val ARRIVAL_COOLDOWN_MS = 10L * 60 * 1000
+
+        /**
+         * How long a recorded [FenceSide] is believed.
+         *
+         * The "you must have been outside" rule is only as good as the evidence behind it,
+         * and the evidence can go stale: Play Services can drop an EXIT, and the distance
+         * tracker only runs while a surface is alive. Past this age the app admits it does
+         * not know where it is and lets the arrival through — because a stuck `INSIDE` would
+         * silence the feature permanently, which is the exact failure a 10 km round trip
+         * already cost once, and a redundant pop-up is the cheaper mistake.
+         */
+        const val SIDE_TRUST_MS = 12L * 60 * 60 * 1000
     }
+}
+
+/**
+ * Which side of the home fence the app last had *evidence* for — not a guess.
+ *
+ * Persisted, because it exists to answer a question the native fence asks from a process
+ * that is usually dead: "was I outside before this ENTER?". Artur's rule, from live testing
+ * 2026-07-28: if the previous position was outside the fence and this one is inside, that is
+ * an arrival; anything else is Play Services re-evaluating a fence around a parked car.
+ */
+enum class FenceSide {
+    /** No evidence, or the last fix was too coarse to place us. Never blocks an arrival. */
+    UNKNOWN,
+    INSIDE,
+    OUTSIDE,
 }
 
 /** How the last attempt to register the fence with Play Services went. */
@@ -67,17 +97,41 @@ enum class FenceSync {
 }
 
 /**
- * Whether an arrival may be announced now — the shared guard both triggers pass through.
+ * Why this arrival must not be announced, or null to announce it — the shared guard every
+ * trigger passes through.
  *
- * Lives here rather than in either trigger because only a *persisted* timestamp can
- * de-duplicate them: the native fence delivers into a process that is usually dead, so an
- * in-memory latch on one side would never see the other's announcement.
+ * Returns the *reason* rather than a boolean so the refusal can be recorded and read back in
+ * Settings. "Nothing popped up" and "something popped it down" are the two outcomes this
+ * whole status model exists to tell apart.
+ *
+ * Lives here rather than in either trigger because only *persisted* state can de-duplicate
+ * them: the native fence delivers into a process that is usually dead, so an in-memory latch
+ * on one side would never see the other's announcement.
+ *
+ * @param requireDeparture whether the caller needs the fence-side check. True only for the
+ *   native fence, which carries no memory of where it was. The in-app fence observed both
+ *   sides itself before it fired, so applying the rule to it would be asking the same
+ *   question twice — and the debug trigger stands in for the native fence from a desk that
+ *   is inside the fence, where the rule would refuse every test.
  */
-fun mayAnnounceArrival(
-    lastAnnouncedAtMs: Long,
+fun arrivalRefusal(
+    status: GeofenceStatus,
     nowMs: Long,
+    requireDeparture: Boolean,
     cooldownMs: Long = GeofenceStatus.ARRIVAL_COOLDOWN_MS,
-): Boolean = lastAnnouncedAtMs <= 0L || nowMs - lastAnnouncedAtMs >= cooldownMs
+    sideTrustMs: Long = GeofenceStatus.SIDE_TRUST_MS,
+): String? {
+    val last = status.lastAnnouncedAtMs
+    if (last > 0L && nowMs - last < cooldownMs) return "another pop-up was posted minutes ago"
+
+    if (requireDeparture &&
+        status.side == FenceSide.INSIDE &&
+        nowMs - status.sideAtMs < sideTrustMs
+    ) {
+        return "already inside the fence"
+    }
+    return null
+}
 
 /**
  * The Settings summary, as prose the driver can act on.
@@ -116,6 +170,13 @@ fun formatGeofenceStatus(
         } else {
             "In-app: no crossing seen yet"
         }
+    }
+
+    // The input to the "you must have been outside" rule, so a refused arrival can be read
+    // back as a consequence rather than as a mystery.
+    if (status.side != FenceSide.UNKNOWN) {
+        val where = if (status.side == FenceSide.INSIDE) "inside" else "outside"
+        lines += "Last seen: $where the fence ${stamp(status.sideAtMs)}"
     }
 
     if (status.lastAnnouncedAtMs > 0L) {

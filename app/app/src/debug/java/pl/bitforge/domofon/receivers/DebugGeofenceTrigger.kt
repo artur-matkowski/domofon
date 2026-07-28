@@ -29,6 +29,15 @@ class DebugGeofenceTrigger : BroadcastReceiver() {
         // Claims to be the native fence, because that is what it stands in for — including
         // going through the same arrival cooldown, so firing this twice in quick succession
         // reproduces the real de-duplication rather than bypassing it.
-        ArrivalFlow.run(context.applicationContext, GeofenceStatus.SOURCE_NATIVE) { pending.finish() }
+        //
+        // The one guard it must not inherit is `requireDeparture`. That rule refuses an
+        // arrival when the app has evidence it is already inside the fence, and a desk with
+        // an adb cable on it is inside the fence — the guard would refuse every test of the
+        // thing this receiver exists to test.
+        ArrivalFlow.run(
+            context.applicationContext,
+            GeofenceStatus.SOURCE_NATIVE,
+            requireDeparture = false,
+        ) { pending.finish() }
     }
 }
