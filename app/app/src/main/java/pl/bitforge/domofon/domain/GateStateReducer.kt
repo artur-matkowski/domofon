@@ -50,7 +50,7 @@ class GateStateReducer(
             if (stale) return null
         }
         newestTs = signal.ts
-        return GateState(signal.state, signal.rawTs)
+        return GateState(signal.state, signal.rawTs, live = !signal.retained)
     }
 
     /** Forget the connection's timestamp memory — call from teardown, before the next open. */

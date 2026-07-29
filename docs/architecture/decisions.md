@@ -84,7 +84,8 @@ this is a platform behavior, not a preference. See
 
 **Context:** battery, and retained state making a standing connection pointless.
 **Decision:** the MQTT connection exists exactly while a `ConnectionLease` is held
-(foreground UI, settings screen, car session, arrival pop-up, one-shot command).
+(foreground UI, settings screen, car session, arrival pop-up, one-shot command, and the
+bounded post-command hold of [D17](#d17--a-command-from-a-notification-holds-the-connection-for-45-s-afterwards)).
 **Consequences:** teardown resets gate state so the arrival pop-up can never announce
 stale state as fresh. **Status:** active.
 
@@ -134,7 +135,7 @@ on the surface's lifecycle scope. **Status:** active.
 AGP9/Qt build could trip over. **Decision:** JUnit4 + kotlinx-coroutines-test only.
 **Status:** active — see [testing.md](../testing.md).
 
-## D12 — Phone shows three buttons; car shows primary + Stop
+## D12 — Phone shows three buttons; the car shows two (see D19 for which)
 
 **Context:** a car Pane takes at most two actions
 (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`); the arrival notification gets exactly
@@ -157,7 +158,12 @@ installs now get the same pane with the gate state in the image slot. See
 and `unknown` offer Open. `stopped` stays on Open deliberately: halted mid-travel it is
 neither, and Open is the safer default for someone driving up to it.
 
-**Status:** active.
+**Superseded in part, 2026-07-29.** The car's *second* button is no longer Stop — it is the
+audio toggle. The rest of this decision stands: the shape (phone three, car two, notification
+one) and `primaryAction` are unchanged. See
+[D19](#d19--the-cars-second-button-is-the-audio-toggle-not-stop).
+
+**Status:** active, with the second slot reassigned by D19.
 
 ## D13 — Two arrival triggers in parallel: Play Services primary, in-app opt-in
 
@@ -339,6 +345,132 @@ rarer sequence, and widening this change to it was not asked for.
 
 **Status:** active. See [modules/ui-notifications.md](../modules/ui-notifications.md)
 invariant 15.
+
+## D17 — A command from a notification holds the connection for 45 s afterwards
+
+**Context.** Tapping *Open gate* on a heads-up produced no feedback whatsoever: the
+notification dismissed itself and nothing else happened for the twenty seconds the gate takes
+to move (Artur, live testing 2026-07-29). The suppression rules looked like the culprit and
+were not. `sendCommandAwait` wraps the publish in `acquire("command").use { }`, so with no
+surface open the app **disconnected within milliseconds of the broker's publish ack** — and the
+gate does not report `opening` for another second or two. There was never a state change to
+suppress; the app was not listening when it happened.
+
+Worse, the miss is permanent for that cycle. Reconnecting later gets the state as a *retained*
+value, and D18's rule refuses to announce those.
+
+**Decision.** `CommandFollowThrough` claims a sixth lease (`command-follow`) for
+`HOLD_MS = 45_000`, armed by `GateCommandReceiver` **before** the send. One gate cycle plus
+margin. The announcing is not its business — `GateEventNotifier` is already the single
+process-wide `gateState` collector and sees the cycle for free.
+
+**Why the lease is taken synchronously.** Acquiring it inside the coroutine would let it land
+*after* `sendCommandAwait` released its own. The teardown in between resets `gateState`, and
+the reconnect costs a VPN handshake during which the live message is missed — leaving the
+window open and empty, which is the failure it exists to prevent wearing a longer timer.
+Re-arming takes the new lease before releasing the old one for the same reason.
+
+**Does this break D5?** No. D5 forbids a *standing* connection, not a bounded one: this is
+user-initiated, expires on its own, and covers the one situation where a lease would otherwise
+be dropped between asking a question and being answered.
+
+**Consequences.** Two heads-ups per notification-driven cycle on the head unit (`opening`, then
+`opened`), which is exactly the pair D16's second id exists to make work. The tail of the hold
+is **best effort**: `goAsync` guarantees receiver priority for about ten seconds, which covers
+the first announcement comfortably; the rest runs in a cached process that Android may reclaim,
+costing the second notification and nothing else. Guaranteeing it needs a foreground service,
+whose permanent notification is not worth a 45-second window.
+
+**Status:** active. See [modules/gate.md](../modules/gate.md).
+
+## D18 — Retained is never news; your own tap is, unless you are looking at it
+
+**Context.** D14 gave `StateChangeAnnouncer` three rules: *learning is not news* (a transition
+out of `unknown`), *your own tap is not news* (one silenced change per command), and *nothing
+is news to someone already reading it*. The middle one is what swallowed the feedback in D17's
+symptom, and the first one was weaker than it looked.
+
+**Decision.** Two rules, not three.
+
+1. **Retained is never news.** `GateState` carries `live`, set from `!signal.retained` in
+   `GateStateReducer`. A retained message is the broker replaying its memory.
+2. **Nothing is news to someone already reading it.** Unchanged, and checked last so a
+   suppressed change still updates `lastSeen`.
+
+The own-tap silence, `GateService.lastCommandAtMs`, and the 20-second window are **deleted**.
+
+**Why rule 1 got stronger.** "A transition out of `unknown` is learning" only covered the
+*first* move of the retained burst. The burst is last-value-per-signal in arbitrary order, so it
+routinely moves the state twice — and the second move was indistinguishable from a real one.
+Keying on `retained` covers the whole burst by construction, and makes the arrival flow's own
+`acquire("arrival")` structurally incapable of announcing anything.
+
+**Why the own-tap silence went.** Every command path either has a screen in front of the user —
+the QML button, the car pane — in which case rule 2 already silences the echo, or it is the
+button *inside a notification*, which dismisses itself on the tap. In that second case the echo
+is the only feedback there is. A rule whose one remaining condition was `surfaceVisible` is
+rule 2 wearing a clock.
+
+**Consequences.** Tapping Open in the phone app and then locking the phone now announces the
+`opened` that follows, where it used to be silent. That is the same behaviour as backgrounding
+the car app mid-cycle, and it is wanted: you walked away, so the notification is the only
+channel left.
+
+**Status:** active. See [modules/ui-notifications.md](../modules/ui-notifications.md).
+
+## D19 — The car's second button is the audio toggle, not Stop
+
+**Context.** D12 gave the car pane the primary action plus Stop, "unconditional because a gate
+you want halted is a gate you want halted". A `Pane` takes at most two actions
+(`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`), so a third button is not available. Gate audio
+takes the car stereo for as long as Domofon is open and there was no way to silence it from the
+head unit, which made the choice gate-or-music for the whole drive (Artur, live testing
+2026-07-29).
+
+**Decision.** Stop moves off the car screen; the second slot becomes a mute toggle writing the
+global `camera.audioEnabled`. Stop remains one of the phone's three buttons.
+
+**Why Stop lost.** It is the answer to a gate misbehaving, which is a stop-the-car problem
+rather than a glance-and-tap one. Muting is the opposite: wanted while moving, wanted at once,
+and worthless anywhere but here.
+
+**Why not the header action strip.** `PaneTemplate.setActionStrip` is free and would have held
+both. Rejected as a *layout* answer to a *priority* question — the strip is the smaller, less
+reachable target, so it would only have moved the problem to whichever button went there.
+
+**Why the global setting rather than a car-local mute.** One lever. The car and the phone
+cannot end up disagreeing about whether the gate is audible, and the Settings switch stays the
+same control it always was. The cost is a camera-session reopen per toggle: `audioEnabled` is
+part of `CameraFeed` identity, so the RTSP handshake runs again (1-3 s over the VPN, last still
+left on screen throughout). Accepted — toggling is rare and the alternative is a second source
+of truth.
+
+**Play IT-1.** IT-1 bars *configuration* from the car — brokers, credentials, locations. A mute
+button is a playback control, and sits beside the one-touch device control IT-1 explicitly
+allows.
+
+**Also here: gate audio ducks, and never pauses.** Both players requested `AUDIOFOCUS_GAIN`
+(`USAGE_MEDIA` + ExoPlayer's `handleAudioFocus = true`) — *permanent* focus, the request an app
+makes when it is the thing the user chose to listen to. The system answers it by stopping
+everything else, permanently, and a permanent loss is not something the loser retries. Hence
+Spotify stopping and never coming back. `GateAudioFocus` now requests
+`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` by hand.
+
+**Why by hand.** There is no one-line version. media3's `AudioFocusManager.setAudioAttributes`
+ends with `checkArgument(focusGain == AUDIOFOCUS_GAIN || focusGain == 0, "Automatic handling of
+audio focus is only available for USAGE_MEDIA and USAGE_GAME.")`, and that method is only
+reached when `handleAudioFocus` is true. Changing the usage to one that maps to a ducking
+request while leaving automatic handling on is an `IllegalArgumentException` at the first frame.
+
+Owning the request means owning the losses, and every one of them is a **volume change**: the
+stream is live, and a paused live stream accumulates a backlog it can only shed by seeking, so
+pausing for a navigation prompt would mean returning a prompt's worth of time behind the gate.
+
+**Status:** active, **untested on hardware**. If gate audio proves inaudible under ducked music,
+drop the focus request entirely — audio then mixes on top and nothing else is disturbed. If a
+head unit refuses to route audio held without focus, revert to `handleAudioFocus = true` and
+rely on the toggle alone. See [modules/ui-car.md](../modules/ui-car.md) and
+[modules/camera.md](../modules/camera.md).
 
 ---
 

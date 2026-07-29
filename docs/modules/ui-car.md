@@ -16,7 +16,7 @@ parsing, no policy here — everything renders `GateViewModel`'s derived state.
   cannot leak the lease), and starts/stops the grabber+tracker with the session.
 - `GateScreen` invalidates on `merge(uiState, frame)` with a 150 ms debounce (the host
   animates between templates; a snapshot and a state change landing together used to push
-  two back to back).
+  two back to back) — **and once more on its own `ON_START`**, see invariant 9.
 - Templates: `MessageTemplate` when unconfigured (points at the phone), `PaneTemplate`
   otherwise — image + one row + two actions. **One configured layout, camera or not**; with
   no camera the image slot carries the gate state as a picture
@@ -71,8 +71,25 @@ Open⇄Close label) lives in a slot the host ignores.
    `SignInTemplate`, `LongMessageTemplate`), so the camera-less path had no safe landing
    either.
 4. **Two actions maximum** (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`):
-   `primaryAction` (Open ⇄ Close) + unconditional Stop — a gate you want halted is a gate
-   you want halted whatever it thinks it is doing. [Decision D12](../architecture/decisions.md).
+   `primaryAction` (Open ⇄ Close) + the **audio toggle**.
+
+   Stop had that second slot until 2026-07-29 and does not any more. Gate audio takes the car
+   stereo for as long as Domofon is open, and with no way to silence it from the head unit the
+   choice was gate-or-music for the whole drive. Stop is the answer to a gate misbehaving,
+   which is a stop-the-car problem rather than a glance-and-tap one; muting is wanted while
+   moving and worthless anywhere but here. Stop remains one of the phone's three buttons.
+   `PaneTemplate.setActionStrip` was free and would have held both — rejected as a *layout*
+   answer to a *priority* question, since the strip is the smaller target and would only have
+   moved the problem to whichever button went there.
+   [D12](../architecture/decisions.md) as amended by
+   [D19](../architecture/decisions.md).
+
+   The toggle writes the **global** `camera.audioEnabled` — the same value the phone's Settings
+   switch writes, so the two cannot disagree — which costs a camera-session reopen per tap
+   (`audioEnabled` is part of `CameraFeed` identity; 1-3 s of RTSP handshake with the last
+   still left on screen). Its label and icon both say what the tap *will do*, matching the
+   button beside it: a speaker showing current state next to a gate button showing the next
+   one would be two conventions on one row.
 5. **Icons are `CarColor.DEFAULT`-tinted** so the host recolors the white silhouettes for
    a light theme; never tint the camera still (it would flatten to a monochrome smear).
    That applies to the `ic_gate_state_*` pictures too — they are white silhouettes for the
@@ -87,6 +104,19 @@ Open⇄Close label) lives in a slot the host ignores.
    needs to know their tap did nothing more than they need to know how far out they are. The
    status keeps line 1 either way; it only had to compete for one slot back when the header
    was the only place text could live.
+9. **`invalidate()` on the screen's own `ON_START`, or the pane comes back stale.** This is not
+   defensive tidiness — `Screen.invalidate()` opens with
+   `if (getLifecycle().getCurrentState().isAtLeast(STARTED))` and does nothing otherwise, which
+   is invisible from the API docs and only findable in the AAR. So every update that landed
+   while the host had Domofon backgrounded was dropped on the floor, and nothing asked again on
+   the way back: `CarAppBinder.onAppStart` only dispatches the lifecycle event, and `uiState` is
+   a `StateFlow` that will not re-emit a value it has already delivered. The head unit therefore
+   redrew its **cached** template — so opening Domofon after tapping *Open gate* on a heads-up
+   showed the gate still closed while it was visibly moving (Artur, live testing 2026-07-29).
+
+   The **Screen's** lifecycle, not the Session's: it is the Screen's state the guard reads. Free
+   against the quota — title, row count and row title are constants, so the extra push is a
+   refresh.
 
 ## Gotchas
 

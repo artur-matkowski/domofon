@@ -10,6 +10,7 @@ import pl.bitforge.domofon.data.camera.CameraFrameGrabber
 import pl.bitforge.domofon.data.config.ConfigPreferenceDataStore
 import pl.bitforge.domofon.data.config.ConfigStore
 import pl.bitforge.domofon.data.config.SecretStore
+import pl.bitforge.domofon.data.mqtt.CommandFollowThrough
 import pl.bitforge.domofon.data.mqtt.GateService
 import pl.bitforge.domofon.data.mqtt.HiveMqTransport
 import pl.bitforge.domofon.ui.notifications.GateNotifier
@@ -17,6 +18,7 @@ import pl.bitforge.domofon.data.location.GeofenceManager
 import pl.bitforge.domofon.data.location.GeofenceStatusStore
 import pl.bitforge.domofon.data.location.HomeDistanceTracker
 import pl.bitforge.domofon.domain.GeofenceStatus
+import pl.bitforge.domofon.domain.config.ConfigKeys
 import pl.bitforge.domofon.receivers.ArrivalFlow
 import pl.bitforge.domofon.ui.notifications.GateEventNotifier
 import pl.bitforge.domofon.ui.shared.GateViewModel
@@ -79,6 +81,12 @@ class AppContainer(app: Application) : AutoCloseable {
     val gateEventNotifier =
         GateEventNotifier(app, gateService, gateNotifier, surfaces, appScope)
 
+    /**
+     * Keeps the connection up long enough after a notification-button command to hear the
+     * gate answer it. A singleton so two taps extend one window instead of stacking leases.
+     */
+    val commandFollowThrough = CommandFollowThrough(gateService, appScope)
+
     init {
         // Upgrade hygiene, once per process and cheap. Frames used to reach QML as a pair of
         // cache files; they now cross as data URIs and nothing writes these any more, but an
@@ -130,6 +138,7 @@ class AppContainer(app: Application) : AutoCloseable {
         cameraHealth = grabber.health,
         frame = grabber.frame,
         distance = tracker.distance,
+        setAudio = { configStore.putBoolean(ConfigKeys.AUDIO_ENABLED, it) },
         scope = scope,
     )
 

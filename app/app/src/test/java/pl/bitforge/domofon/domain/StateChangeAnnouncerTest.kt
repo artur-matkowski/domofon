@@ -12,153 +12,148 @@ class StateChangeAnnouncerTest {
 
     private val announcer = StateChangeAnnouncer()
 
-    /** Nothing on screen unless a test says so — the default the other two rules are read in. */
-    private fun announce(
-        state: String,
-        lastCommandAtMs: Long,
-        nowMs: Long,
-        surfaceVisible: Boolean = false,
-    ) = announcer.shouldAnnounce(state, lastCommandAtMs, nowMs, surfaceVisible)
+    /**
+     * A message the bridge published while we were listening, with nothing on screen — the
+     * default the whole table is read in, because it is the only combination that announces.
+     */
+    private fun live(state: String, surfaceVisible: Boolean = false) =
+        announcer.shouldAnnounce(state, live = true, surfaceVisible = surfaceVisible)
 
-    /** No command has ever been sent: the silence branch must never engage. */
-    private fun change(state: String, nowMs: Long = 0L) =
-        announce(state, lastCommandAtMs = 0L, nowMs = nowMs)
+    /** A retained message: the broker replaying what it was already holding. */
+    private fun retained(state: String, surfaceVisible: Boolean = false) =
+        announcer.shouldAnnounce(state, live = false, surfaceVisible = surfaceVisible)
 
-    // --- rule 1: learning is not news -------------------------------------------------
+    /** The reset [GateService.teardown] writes; it carries no message, so it is never live. */
+    private fun disconnect() = retained(GatePolicy.STATE_UNKNOWN)
+
+    // --- retained is never news --------------------------------------------------------
 
     @Test
     fun `the state a fresh connection learns is not announced`() {
         // Exactly the bug: opening the car app acquires a lease, the retained rx topics
         // replay, and gateState moves unknown -> closed without the gate moving at all.
-        assertFalse(change(GatePolicy.STATE_UNKNOWN))
-        assertFalse(change(GatePolicy.STATE_CLOSED))
+        assertFalse(disconnect())
+        assertFalse(retained(GatePolicy.STATE_CLOSED))
     }
 
     @Test
+    fun `a retained burst that moves the state twice announces nothing`() {
+        // The reason this rule replaced "a transition out of unknown is learning". Retained
+        // rx topics are last-value-per-signal and arrive in arbitrary order, so the burst can
+        // move the state more than once — and every move after the first looked like news.
+        assertFalse(retained(GatePolicy.STATE_STOPPED))
+        assertFalse(retained(GatePolicy.STATE_CLOSED))
+        assertFalse(retained(GatePolicy.STATE_OPENED))
+    }
+
+    @Test
+    fun `a retained message is silent even mid-connection`() {
+        assertFalse(retained(GatePolicy.STATE_CLOSED))
+        assertTrue(live(GatePolicy.STATE_OPENING))
+        // A late retained arrival is still the broker's memory, not the gate moving.
+        assertFalse(retained(GatePolicy.STATE_CLOSED))
+    }
+
+    @Test
+    fun `what a retained message taught is still remembered`() {
+        // Silent, but not ignored: the burst is how this connection knows where the gate is,
+        // so the first live change must be judged against it.
+        assertFalse(retained(GatePolicy.STATE_CLOSED))
+        assertTrue(live(GatePolicy.STATE_OPENING))
+    }
+
+    // --- a live move between two known states -----------------------------------------
+
+    @Test
     fun `a real move between known states is announced`() {
-        change(GatePolicy.STATE_CLOSED)
-        assertTrue(change(GatePolicy.STATE_OPENING))
-        assertTrue(change(GatePolicy.STATE_OPENED))
+        retained(GatePolicy.STATE_CLOSED)
+        assertTrue(live(GatePolicy.STATE_OPENING))
+        assertTrue(live(GatePolicy.STATE_OPENED))
+    }
+
+    @Test
+    fun `the first message of a connection is learning even when it is live`() {
+        // We connected while the bridge happened to be publishing. It still only tells us
+        // where the gate already was.
+        assertFalse(live(GatePolicy.STATE_CLOSED))
+        assertTrue(live(GatePolicy.STATE_OPENING))
     }
 
     @Test
     fun `teardown then reconnect announces nothing`() {
-        change(GatePolicy.STATE_CLOSED)
-        assertTrue(change(GatePolicy.STATE_OPENED))
+        retained(GatePolicy.STATE_CLOSED)
+        assertTrue(live(GatePolicy.STATE_OPENED))
 
         // teardown() resets gateState to unknown — GateService invariant 4.
-        assertFalse(change(GatePolicy.STATE_UNKNOWN))
+        assertFalse(disconnect())
         // ...and the next connection learns the same state it already had. Not news, and
         // not a move backwards either.
-        assertFalse(change(GatePolicy.STATE_OPENED))
+        assertFalse(retained(GatePolicy.STATE_OPENED))
     }
 
     @Test
     fun `the reset itself is never announced`() {
-        change(GatePolicy.STATE_CLOSED)
-        assertFalse(change(GatePolicy.STATE_UNKNOWN))
+        retained(GatePolicy.STATE_CLOSED)
+        assertFalse(disconnect())
     }
 
     @Test
     fun `an unchanged state is not a change`() {
-        change(GatePolicy.STATE_CLOSED)
-        assertFalse(change(GatePolicy.STATE_CLOSED))
+        retained(GatePolicy.STATE_CLOSED)
+        assertFalse(live(GatePolicy.STATE_CLOSED))
     }
 
-    // --- rule 2: your own tap silences exactly one change -----------------------------
-
-    @Test
-    fun `a command silences the change it caused and only that one`() {
-        val tap = 10_000L
-        announce(GatePolicy.STATE_CLOSED, 0L, 0L)   // learned on connect
-
-        // You tapped Open. "opening" is the gate doing what you just told it to.
-        assertFalse(announce(GatePolicy.STATE_OPENING, tap, tap + 1_000))
-        // "opened" is the thing you were actually waiting for — Artur's rule: the silence is
-        // released by the first change, not by the clock.
-        assertTrue(announce(GatePolicy.STATE_OPENED, tap, tap + 4_000))
-    }
-
-    @Test
-    fun `a stale command does not silence anything`() {
-        val tap = 10_000L
-        announce(GatePolicy.STATE_CLOSED, 0L, 0L)
-
-        // Nothing happened for longer than the window; whatever moves the gate now is not us.
-        assertTrue(
-            announce(
-                GatePolicy.STATE_OPENING, tap,
-                tap + StateChangeAnnouncer.COMMAND_SILENCE_MS + 1,
-            )
-        )
-    }
-
-    @Test
-    fun `each command gets its own silence`() {
-        announce(GatePolicy.STATE_CLOSED, 0L, 0L)
-
-        val first = 10_000L
-        assertFalse(announce(GatePolicy.STATE_OPENING, first, first + 500))
-        assertTrue(announce(GatePolicy.STATE_OPENED, first, first + 3_000))
-
-        val second = 60_000L
-        assertFalse(announce(GatePolicy.STATE_CLOSING, second, second + 500))
-        assertTrue(announce(GatePolicy.STATE_CLOSED, second, second + 3_000))
-    }
-
-    @Test
-    fun `a command sent while disconnected does not eat the state the reconnect learns`() {
-        // The notification-button path: tap with the app closed, which acquires a lease and
-        // connects. Learning is already silent for its own reason, and the tap's one silence
-        // must still be there for the change that follows.
-        val tap = 10_000L
-        assertFalse(announce(GatePolicy.STATE_UNKNOWN, tap, tap + 100))
-        assertFalse(announce(GatePolicy.STATE_CLOSED, tap, tap + 2_000))
-        assertFalse(announce(GatePolicy.STATE_OPENING, tap, tap + 3_000))
-        assertTrue(announce(GatePolicy.STATE_OPENED, tap, tap + 9_000))
-    }
-
-    // --- rule 3: nothing is news to someone already reading it ------------------------
+    // --- nothing is news to someone already reading it --------------------------------
 
     @Test
     fun `a change is not announced while a surface is in front`() {
-        change(GatePolicy.STATE_CLOSED)
-        assertFalse(announce(GatePolicy.STATE_OPENING, 0L, 0L, surfaceVisible = true))
+        retained(GatePolicy.STATE_CLOSED)
+        assertFalse(live(GatePolicy.STATE_OPENING, surfaceVisible = true))
     }
 
     @Test
     fun `backgrounding the app puts the notifications back`() {
         // The head unit switching to Maps is the moment a notification becomes the only way
         // to reach the driver, so it must engage on the very next change.
-        change(GatePolicy.STATE_CLOSED)
-        assertFalse(announce(GatePolicy.STATE_OPENING, 0L, 0L, surfaceVisible = true))
-        assertTrue(announce(GatePolicy.STATE_OPENED, 0L, 0L, surfaceVisible = false))
+        retained(GatePolicy.STATE_CLOSED)
+        assertFalse(live(GatePolicy.STATE_OPENING, surfaceVisible = true))
+        assertTrue(live(GatePolicy.STATE_OPENED, surfaceVisible = false))
     }
 
     @Test
     fun `a suppressed change still counts as seen`() {
-        // Ordering inside shouldAnnounce: rule 3 is last, so the state it suppressed is still
-        // recorded. Otherwise the gate could move away and back while the app was open and
-        // the return would read as a change from the state before it all.
-        change(GatePolicy.STATE_CLOSED)
-        assertFalse(announce(GatePolicy.STATE_OPENED, 0L, 0L, surfaceVisible = true))
-        assertFalse(announce(GatePolicy.STATE_OPENED, 0L, 0L, surfaceVisible = false))
-    }
-
-    @Test
-    fun `a suppressed change still consumes the command silence`() {
-        // Tap Open on the car screen: "opening" is silenced twice over (your own tap, and you
-        // are looking at it). The tap's one silence must be spent all the same, or the
-        // "opened" you get after switching to Maps would be eaten too.
-        val tap = 10_000L
-        change(GatePolicy.STATE_CLOSED)
-        assertFalse(announce(GatePolicy.STATE_OPENING, tap, tap + 500, surfaceVisible = true))
-        assertTrue(announce(GatePolicy.STATE_OPENED, tap, tap + 4_000, surfaceVisible = false))
+        // Ordering inside shouldAnnounce: the surface check is last, so the state it
+        // suppressed is still recorded. Otherwise the gate could move away and back while the
+        // app was open and the return would read as a change from the state before it all.
+        retained(GatePolicy.STATE_CLOSED)
+        assertFalse(live(GatePolicy.STATE_OPENED, surfaceVisible = true))
+        assertFalse(live(GatePolicy.STATE_OPENED, surfaceVisible = false))
     }
 
     @Test
     fun `learning is still silent when a surface is in front`() {
-        assertFalse(announce(GatePolicy.STATE_UNKNOWN, 0L, 0L, surfaceVisible = true))
-        assertFalse(announce(GatePolicy.STATE_CLOSED, 0L, 0L, surfaceVisible = true))
+        assertFalse(announcer.shouldAnnounce(GatePolicy.STATE_UNKNOWN, false, true))
+        assertFalse(retained(GatePolicy.STATE_CLOSED, surfaceVisible = true))
+    }
+
+    // --- the notification-tap path -----------------------------------------------------
+
+    @Test
+    fun `the gate cycle you asked for from a notification is announced`() {
+        // The whole point of dropping the own-tap silence (Artur, live testing 2026-07-29).
+        // Nothing is on screen — the notification that offered the button dismissed itself on
+        // the tap — so the movement it caused is the only feedback there is.
+        assertFalse(retained(GatePolicy.STATE_CLOSED))   // the command lease connects, learns
+        assertTrue(live(GatePolicy.STATE_OPENING))       // ~1-2 s later: it heard you
+        assertTrue(live(GatePolicy.STATE_OPENED))        // ~20 s later: it finished
+    }
+
+    @Test
+    fun `the gate cycle you asked for from a screen is not announced`() {
+        // The same taps with the car screen up: the pane already shows both of these, and a
+        // heads-up would cover the screen the driver chose.
+        retained(GatePolicy.STATE_CLOSED)
+        assertFalse(live(GatePolicy.STATE_OPENING, surfaceVisible = true))
+        assertFalse(live(GatePolicy.STATE_OPENED, surfaceVisible = true))
     }
 }

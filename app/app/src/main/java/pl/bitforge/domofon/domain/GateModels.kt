@@ -5,8 +5,14 @@ package pl.bitforge.domofon.domain
  * [state] is protocol vocabulary ("opened", "closing", …) — see [GateProtocol] — with
  * [GatePolicy.STATE_UNKNOWN] standing in whenever nothing has been heard on the current
  * connection.
+ *
+ * @param live true when the bridge published this while we were attached, false when the
+ *   broker replayed a retained value at us. Nothing on screen renders it — it exists for
+ *   [StateChangeAnnouncer], to which a retained message is this connection learning where
+ *   the gate already was rather than the gate moving. Defaulted, because the only value that
+ *   is not built from a decoded message is the `unknown` a teardown writes.
  */
-data class GateState(val state: String, val changedAt: String)
+data class GateState(val state: String, val changedAt: String, val live: Boolean = false)
 
 /** A button label paired with the action it sends, so every surface agrees on both. */
 data class PrimaryAction(val label: String, val action: String)

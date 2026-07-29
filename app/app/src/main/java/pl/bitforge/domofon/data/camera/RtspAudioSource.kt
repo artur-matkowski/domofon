@@ -55,6 +55,7 @@ class RtspAudioSource(
 
     /** Player-thread only. */
     private var playing = false
+    private var focus: GateAudioFocus? = null
 
     private val retryRunnable = Runnable { handler?.let { startAttempt(it) } }
 
@@ -128,15 +129,19 @@ class RtspAudioSource(
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
             .build()
-        // handleAudioFocus = true, exactly as the RTSP path does it: a navigation prompt
-        // ducks the gate audio for its duration rather than being silenced by it.
+        // handleAudioFocus = false, exactly as the RTSP path does it: automatic handling can
+        // only ask for permanent focus, which stops the car stereo for good. [GateAudioFocus]
+        // asks to duck instead.
         p.setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
                 .build(),
-            /* handleAudioFocus = */ true,
+            /* handleAudioFocus = */ false,
         )
+        // `h`, not the main looper: this player answers on its own thread and throws if
+        // touched from another. See [GateAudioFocus].
+        focus = GateAudioFocus(context, h) { p.volume = it }.also { it.request() }
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (!isPlaying || playing) return
@@ -177,6 +182,10 @@ class RtspAudioSource(
     private fun releaseAttempt() {
         handler?.removeCallbacks(watchdogRunnable)
         playing = false
+        // Before the player, so the volume callback cannot land on a released one — and so
+        // whatever we ducked is back at full volume the moment the gate stops talking.
+        focus?.abandon()
+        focus = null
         player?.release()
         player = null
     }

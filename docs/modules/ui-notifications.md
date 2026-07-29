@@ -16,6 +16,7 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
 | `domain/freeNotificationSlot` | *Where*: which of the gate event's two ids the next announcement goes on, so a repeat is a new notification rather than a silent update |
 | `ui/shared/SurfacePresence` | *Whether, part two*: which Domofon surfaces are in front of the user right now |
 | `receivers/GateCommandReceiver` | The action button's backend: keyguard re-check, dismiss-as-ack, `sendCommandAwait`, failure notification |
+| `data/mqtt/CommandFollowThrough` | *Long enough to hear the answer*: holds the connection ~45 s past a notification-tap command, so the gate cycle it caused reaches the collector at all |
 
 ## Invariants
 
@@ -24,8 +25,10 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    notification posted twice whenever phone and car were open together. Being permanent is
    free: `gateState` only moves while some lease holds the connection.
 
-2. **Learning a state is not a state change**, and the filter for that is
-   `StateChangeAnnouncer`, not a flow operator.
+2. **A retained message is never announced**, and the filter for that is
+   `StateChangeAnnouncer`, not a flow operator. `GateState.live` carries `!signal.retained`
+   down from `GateStateReducer`; a retained value is the broker replaying its memory, i.e.
+   this connection finding out where the gate already was.
 
    This invariant used to read "`drop(1)` still skips the state a surface connects *into*
    (not news)", **which was false** — `drop(1)` dropped exactly one value in the life of the
@@ -37,12 +40,26 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    a state-change pop-up ~750 ms *before* the arrival pop-up it existed to deliver, so the
    headline feature shipped double. (Artur, live testing 2026-07-27.)
 
-3. **A command silences the next state change, and only the next one.** Tapping Open hides
-   the `opening` you caused and still announces the `opened` you were waiting for. The
-   silence is *consumed* by the first change rather than expiring on a clock — Artur's rule,
-   and the reason `StateChangeAnnouncer` compares command timestamps instead of counting down
-   a deadline. `GateService.lastCommandAtMs` is a plain volatile read, not a flow, so it
-   cannot lose a race with `gateState` and let the notification through anyway.
+   Its **second** wording — "a transition out of `unknown` is learning" — fixed that case and
+   only that case. The retained burst is last-value-per-signal in arbitrary order, so it
+   routinely moves the state more than once, and every move after the first was
+   indistinguishable from a real one. Keying on `retained` covers the whole burst by
+   construction, and makes `ArrivalFlow`'s lease structurally incapable of announcing
+   anything. (D18.)
+
+3. **Your own tap is announced too — unless you are looking at a screen.** There used to be a
+   third rule here: a command silenced exactly one following state change, consumed rather
+   than expiring, so tapping Open hid the `opening` you caused and still announced the
+   `opened` you waited for. It is **gone**, along with `GateService.lastCommandAtMs`.
+
+   It was right for the surface it was written against and wrong for the one that needed it.
+   Every command path either has a screen in front of the user — the QML button, the car pane
+   — where invariant 12 already silences the echo, or it is the button *inside a
+   notification*, which dismisses itself on the tap. In that second case the echo is the only
+   feedback there is, and swallowing it meant tapping *Open gate* on the head unit produced
+   nothing at all for the twenty seconds the gate takes to move (Artur, live testing
+   2026-07-29). A rule whose one remaining condition was `surfaceVisible` is invariant 12
+   wearing a clock. (D18.)
 4. **Three kinds of notification, four ids** (event 1001 **+ 1004** / arrival 1002 / failure
    1003): an arrival pop-up must not silently replace an event, and a failure report must never
    overwrite the thing that failed. 1004 is not a fourth kind — it is the gate event's **second
@@ -73,7 +90,7 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
 12. **Nothing is announced to a surface that is already showing it.** While the car screen is
    the visible app on the head unit, or `MainActivity` is between `onStart` and `onStop`,
    state-change and arrival notifications are suppressed — `ui/shared/SurfacePresence` is the
-   flag, `StateChangeAnnouncer` rule 3 and `ArrivalFlow` are its two readers. That screen
+   flag, `StateChangeAnnouncer`'s last rule and `ArrivalFlow` are its two readers. That screen
    already carries the state and the button a heads-up would be duplicating, and on the head
    unit it covers the very screen the driver chose. Three consequences worth stating:
    **Settings is deliberately not a suppressing surface** (it shows configuration, not gate
@@ -89,8 +106,9 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    into the car the next morning therefore showed yesterday's "Approaching home" — and, worse,
    made the *next* arrival a `notify()` onto a live id, i.e. an **update**, which the car host
    does not draw a heads-up for. So: `setTimeoutAfter` on all three (**arrival 30 s**, event and
-   failure 10 min) plus `GateNotifier.clearTransient` (1001 + 1002) when a surface comes to the
-   front. The arrival timeout is deliberately **shorter than the window in which another arrival
+   failure 10 min) plus `GateNotifier.clearTransient` (**both event slots, 1001 + 1004, and the
+   arrival 1002** — the failure id is deliberately left alone, see invariant 7) when a surface
+   comes to the front. The arrival timeout is deliberately **shorter than the window in which another arrival
    may be announced**; that gap is what guarantees the slot is empty and the next pop-up counts
    as new rather than as an update. Which is why the arrival lifetime is
    `GeofenceStatus.ARRIVAL_POPUP_TTL_MS` and *not* a constant of `GateNotifier`: it sits beside
@@ -130,6 +148,18 @@ carrying a `CarAppExtender` draws over whatever the car screen shows, Maps inclu
    `getActiveNotifications` returns only this app's own notifications and needs no permission;
    the call is guarded, and an empty result simply means the primary slot is used — the exact
    behaviour that existed when there was one id.
+16. **A command from a notification keeps the connection for 45 s, or there is nothing to
+   announce.** `sendCommandAwait` releases its lease at the broker's publish ack, and the gate
+   does not report `opening` for another second or two — so with no surface open the app was
+   already gone. Not a suppression bug: there was no state change to suppress.
+   `CommandFollowThrough.arm()` is called by the receiver **before** the send, and takes its
+   lease synchronously, so the two claims overlap. They must: a teardown in the gap resets
+   `gateState` and the reconnect costs a VPN handshake, during which the live message is missed
+   — and it would then only ever return as a *retained* one, which invariant 2 refuses. The
+   release is a plain synchronized field write rather than the coroutine's `finally`, because a
+   coroutine cancelled before it has started never enters its body, which is exactly the
+   `arm()`-then-`disarm()` ordering the failure path produces. The tail is best-effort past
+   `goAsync`'s ~10 s; see D17. (Artur, live testing 2026-07-29.)
 
 ## Channels
 

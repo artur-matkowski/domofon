@@ -1,6 +1,7 @@
 package pl.bitforge.domofon.ui.car
 
 import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
@@ -12,6 +13,8 @@ import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.core.graphics.drawable.IconCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -28,13 +31,27 @@ import pl.bitforge.domofon.ui.shared.GateViewModel
  * [GateViewModel] shape the phone UI renders drives this too. Android Auto renders only Car
  * App Library templates, so this is a pane, not QML.
  *
- * Two buttons: the state-dependent one — [GateUiState.primaryAction], Open or Close but never
- * both, the same value the heads-up notification derives so the two can never contradict each
- * other — and Stop, which is unconditional because a gate you want halted is a gate you want
- * halted whatever it thinks it is doing. The phone's third button is that same pair plus the
- * redundant half of Open/Close; the car cannot hold three anyway, as a Pane takes at most two
- * actions (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`). The arrival notification stays at
- * one button — a driver reaching for a heads-up needs one target.
+ * Two buttons, which is the hard maximum — a Pane takes at most two actions
+ * (`ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`). The state-dependent one is
+ * [GateUiState.primaryAction], Open or Close but never both, the same value the heads-up
+ * notification derives so the two can never contradict each other. The second is the audio
+ * toggle.
+ *
+ * **Stop used to have that second slot and no longer does.** Gate audio takes the car stereo
+ * while Domofon is open, and with no way to silence it from the head unit the choice was
+ * between the gate and the music for the whole drive (Artur, live testing 2026-07-29). Stop
+ * is still one of the phone's three buttons, and it was always the least reachable of the
+ * three anyway: it is the answer to a gate misbehaving, which is a stop-the-car problem
+ * rather than a glance-and-tap one. Muting is the opposite — wanted while moving, wanted at
+ * once, and worthless anywhere but here.
+ *
+ * The toggle writes the global `camera.audioEnabled`, the same value the phone's Settings
+ * switch writes; the car does not get a mute of its own. Play's IT-1 bars *configuration*
+ * from the car — brokers, credentials, locations — and a mute button is a playback control,
+ * which sits beside the one-touch device control IT-1 explicitly allows.
+ *
+ * The arrival notification stays at one button — a driver reaching for a heads-up needs one
+ * target.
  *
  * ## Why everything volatile lives in a text line or the image
  *
@@ -71,6 +88,31 @@ class GateScreen(
 
     init {
         observeState()
+        redrawOnReturn()
+    }
+
+    /**
+     * Ask for a fresh template every time this screen comes back to the front.
+     *
+     * `Screen.invalidate()` opens with `if (getLifecycle().getCurrentState().isAtLeast(STARTED))`
+     * and does nothing otherwise — a hard rule, and invisible from the API docs. So every
+     * update that landed while the host had Domofon backgrounded was dropped on the floor, and
+     * nothing asked again on the way back: `onAppStart` only dispatches the lifecycle event,
+     * and [uiState] is a `StateFlow` that will not re-emit a value it has already delivered.
+     * The head unit therefore redrew its cached template — so opening Domofon after tapping
+     * *Open gate* on a heads-up showed the gate still closed while it was visibly moving
+     * (Artur, live testing 2026-07-29).
+     *
+     * The Screen's own lifecycle, not the Session's: it is the Screen's state that
+     * `invalidate()` guards on. Free against the five-push quota — title, row count and row
+     * title are constants, so this is a refresh (see the refresh rule above).
+     */
+    private fun redrawOnReturn() {
+        lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) = invalidate()
+            }
+        )
     }
 
     /** Its own function only so the [FlowPreview] opt-in for `debounce` stays this narrow. */
@@ -155,10 +197,14 @@ class GateScreen(
                     .build()
             )
             .addAction(
+                // Both the label and the icon say what the tap *will do*, exactly as the
+                // button beside it does ("Open gate" carries the opening arrows). A speaker
+                // showing the current state next to a gate button showing the next one would
+                // be two conventions on one row.
                 Action.Builder()
-                    .setTitle(STOP_LABEL)
-                    .setIcon(themedIcon(R.drawable.ic_gate_stop))
-                    .setOnClickListener { viewModel.send(STOP_ACTION) }
+                    .setTitle(carContext.getString(audioLabelRes(state.audioEnabled)))
+                    .setIcon(themedIcon(audioIconRes(state.audioEnabled)))
+                    .setOnClickListener { viewModel.setAudioEnabled(!state.audioEnabled) }
                     .build()
             )
             .build()
@@ -173,6 +219,14 @@ class GateScreen(
     @DrawableRes
     private fun primaryIconRes(action: String): Int =
         if (action == "close") R.drawable.ic_gate_close else R.drawable.ic_gate_open
+
+    @StringRes
+    private fun audioLabelRes(audioEnabled: Boolean): Int =
+        if (audioEnabled) R.string.car_audio_mute else R.string.car_audio_unmute
+
+    @DrawableRes
+    private fun audioIconRes(audioEnabled: Boolean): Int =
+        if (audioEnabled) R.drawable.ic_audio_off else R.drawable.ic_audio_on
 
     /**
      * The gate itself as a picture, for the camera-less pane.
@@ -207,9 +261,6 @@ class GateScreen(
             .build()
 
     private companion object {
-        const val STOP_LABEL = "Stop"
-        const val STOP_ACTION = "stop"
-
         /**
          * The row's title. **Must stay constant** — it is one of the three things the host
          * compares when deciding whether a push is a free refresh. See the class doc.

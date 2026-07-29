@@ -471,7 +471,8 @@ append-only history — entries are never rewritten to match later refactors.
   **Cause**: `GateNotifier` was context-blind — nothing in the app tracked whether a Domofon
   surface was in front of the user, so there was no way to ask.
   **Fix**: `ui/shared/SurfacePresence`, written from `CarGateSession`'s lifecycle observer and
-  `MainActivity.onStart`/`onStop`, read by `StateChangeAnnouncer` (rule 3) and `ArrivalFlow`.
+  `MainActivity.onStart`/`onStop`, read by `StateChangeAnnouncer` (its last rule) and
+  `ArrivalFlow`.
   Command failures are exempt. See [ui-notifications](modules/ui-notifications.md) invariant 12
   and [D14](architecture/decisions.md). If notifications ever go *permanently* silent, suspect
   a stuck flag first — which is why `MainActivity.onStop` clears it before every early return.
@@ -492,12 +493,56 @@ append-only history — entries are never rewritten to match later refactors.
   **Fix**: `opened`, `opening` and `stuck_opening` offer Close; the rest offer Open. Free on
   the car screen — action labels are not part of the template refresh comparison.
 
+- **Symptom**: tapping *Open gate* on a heads-up while Domofon is backgrounded on the head
+  unit gives **no feedback at all** — the notification vanishes and nothing happens for the
+  twenty seconds the gate takes to move. (Artur, 2026-07-29.)
+  **Cause**: not the suppression rules, though they look guilty. `GateService.sendCommandAwait`
+  wraps the publish in `acquire("command").use { }`, so with no surface holding a lease the app
+  disconnected within milliseconds of the broker's publish ack — and the gate does not report
+  `opening` for another second or two. There was never a state change to suppress. (Compounded
+  by the old own-tap rule, which would have silenced the `opening` even if it had arrived.)
+  **Fix** (D17/D18): `data/mqtt/CommandFollowThrough` holds a `command-follow` lease for 45 s,
+  armed by `GateCommandReceiver` **before** the send so the two claims overlap; and the own-tap
+  silence is gone, so a change with no surface in front is announced. **Do not** arm it inside
+  a coroutine — if the lease lands after `command` is released, the teardown resets `gateState`
+  and the reconnect misses the live message, which then only ever returns as a *retained* one
+  that the announcer refuses. **Do not** release it from a coroutine's `finally` either: a
+  coroutine cancelled before it starts never enters its body, and `arm()`-then-`disarm()` is
+  exactly what the failure path does.
+
+- **Symptom**: open Domofon on the head unit after the gate has started moving and the pane
+  shows the **old** state, indefinitely — the gate is visibly opening, the screen says closed.
+  (Artur, 2026-07-29.)
+  **Cause**: `Screen.invalidate()` is a **no-op below `STARTED`** — its body is guarded by
+  `getLifecycle().getCurrentState().isAtLeast(STARTED)`, which is visible only in the AAR, not
+  in the API docs. `GateScreen` only invalidated on a flow emission, so everything that landed
+  while the host had the app backgrounded was dropped, and nothing asked again on return:
+  `CarAppBinder.onAppStart` merely dispatches the lifecycle event, and a `StateFlow` does not
+  re-emit a value it has already delivered. The host redrew its cached template.
+  **Fix**: a `DefaultLifecycleObserver` on the **Screen's** lifecycle calling `invalidate()` in
+  `onStart`. Free against the five-push quota — title, row count and row title are constants,
+  so it is a refresh. If a car template ever looks frozen, this guard is the first thing to
+  suspect; it fails silently by design.
+
+- **Symptom**: opening Domofon **stops** Spotify on the car stereo, and closing Domofon does
+  not bring it back. (Artur, 2026-07-29.)
+  **Cause**: both audio paths passed `handleAudioFocus = true` with `USAGE_MEDIA`, which is a
+  request for `AUDIOFOCUS_GAIN` — *permanent* focus. The system grants it by telling everything
+  else to stop permanently, and a permanent loss is not something the loser retries.
+  **Fix** (D19): `data/camera/GateAudioFocus` requests `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` by
+  hand, and both players pass `handleAudioFocus = false`. Plus a mute toggle on the car pane, in
+  the slot Stop used to have. **Do not** try the one-line version — changing the usage to
+  `USAGE_ASSISTANCE_*` while leaving `handleAudioFocus = true` throws: media3's
+  `AudioFocusManager.setAudioAttributes` asserts *"Automatic handling of audio focus is only
+  available for USAGE_MEDIA and USAGE_GAME"*. Losing focus lowers the volume and never pauses —
+  the stream is live, and a paused live stream comes back behind the gate.
+
 - **Measured template limits** (read out of `androidx.car.app:app:1.7.0` itself, so no need
   to re-derive them): a **`Pane` takes at most 2 actions** —
   `PaneTemplate.Builder.build()` validates against
   `ACTIONS_CONSTRAINTS_BODY_WITH_PRIMARY_ACTION`, `maxActions = 2`, `maxCustomTitles = 2` —
-  which is why the car screen offers the primary action plus Stop and not the phone's three
-  buttons. A **pane row takes 2 text lines** and no click listener
+  which is why the car screen offers the primary action plus the audio toggle and not the
+  phone's three buttons. A **pane row takes 2 text lines** and no click listener
   (`ROW_CONSTRAINTS_PANE`). A template `ActionStrip` is capped at 2 actions with only 1
   custom title (`ACTIONS_CONSTRAINTS_SIMPLE`). Over-stepping any of these is an
   `IllegalArgumentException` at *runtime*, not a compile error — a green build proves

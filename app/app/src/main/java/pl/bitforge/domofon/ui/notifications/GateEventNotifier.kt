@@ -44,8 +44,7 @@ class GateEventNotifier(
             .onEach {
                 val announce = announcer.shouldAnnounce(
                     state = it.state,
-                    lastCommandAtMs = gate.lastCommandAtMs,
-                    nowMs = System.currentTimeMillis(),
+                    live = it.live,
                     // Read here, not in the notifier: this class owns *when*, and the
                     // notifier stays a stateless renderer.
                     surfaceVisible = surfaces.anyVisible,

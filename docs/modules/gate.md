@@ -34,7 +34,14 @@ class GateService(transport, currentConfig: () -> DomofonConfig, scope, reconnec
 }
 ```
 
-Lease tags in use: `phone-ui`, `settings`, `car-session`, `arrival`, `command`.
+Lease tags in use: `phone-ui`, `settings`, `car-session`, `arrival`, `command`,
+`command-follow`.
+
+`command-follow` is the only one nobody's lifecycle owns: `data/mqtt/CommandFollowThrough`
+holds it for 45 s after a command sent from a notification, because `command` is released at
+the broker's publish ack and the gate does not answer for another second or two — so the app
+was gone before the state change it had just caused. Bounded and user-initiated, so D5 still
+holds. See [D17](../architecture/decisions.md).
 
 ## Invariants (numbered, with why)
 

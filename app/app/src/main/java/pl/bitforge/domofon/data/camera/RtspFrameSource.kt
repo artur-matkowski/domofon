@@ -83,6 +83,9 @@ class RtspFrameSource(
     private var streaming = false
     private var loggedAudioCodec = false
 
+    /** Null on a muted feed, and for the whole of any attempt that has no audio to place. */
+    private var focus: GateAudioFocus? = null
+
     private val retryRunnable = Runnable { handler?.let { startAttempt(it) } }
 
     private val watchdogRunnable = Runnable {
@@ -183,16 +186,19 @@ class RtspFrameSource(
             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !audio)
             .build()
         if (audio) {
-            // handleAudioFocus = true: ExoPlayer requests ordinary media focus and honours
-            // transient ducking, so a navigation prompt lowers the gate audio for its
-            // duration rather than being silenced by it — duck, not fight.
+            // handleAudioFocus = false, and [GateAudioFocus] asks instead. ExoPlayer's
+            // automatic handling only knows how to request *permanent* focus, which stops the
+            // car stereo for good; we want to duck it and hand it back. See that class.
             p.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
                     .build(),
-                /* handleAudioFocus = */ true,
+                /* handleAudioFocus = */ false,
             )
+            // `h`, not the main looper: this player answers on its own thread and throws if
+            // touched from another. See [GateAudioFocus].
+            focus = GateAudioFocus(context, h) { p.volume = it }.also { it.request() }
         }
         p.addListener(object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
@@ -275,6 +281,10 @@ class RtspFrameSource(
     private fun releaseAttempt() {
         handler?.removeCallbacks(watchdogRunnable)
         streaming = false
+        // Before the player, so the volume callback cannot land on a released one — and so
+        // whatever we ducked is back at full volume the moment the gate stops talking.
+        focus?.abandon()
+        focus = null
         // Player first: it must stop writing into the surface before the surface goes away.
         player?.release()
         player = null

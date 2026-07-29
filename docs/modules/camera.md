@@ -18,6 +18,7 @@ the phone shows the same still.
 | `HttpCameraSource` | The HTTP path's composite: an image source plus an optional audio source, one lifetime |
 | `HttpFrameSource` | The JPEG-endpoint poller (the HTTP path's picture half) |
 | `RtspAudioSource` | Audio-only media3 session, no surface (the HTTP path's sound half) |
+| `GateAudioFocus` | The focus request both audio paths share: duck other media, never pause |
 | `OffscreenTextureReader` | Offscreen EGL context + `glReadPixels` — the only safe frame readback |
 
 ## Public API
@@ -87,10 +88,31 @@ a camera configured" (`hasPicture`).
    never touches `Status`, never clears a frame, and never changes the car pane — stills that
    keep arriving are not an error. It surfaces as one muted line on the phone, worded by
    `GatePolicy.cameraAudioNotice`, and nowhere else.
+
+   3a. **Gate audio ducks other media and never pauses anything, itself included.** Both
+   players used to pass `handleAudioFocus = true` with `USAGE_MEDIA`, which requests
+   `AUDIOFOCUS_GAIN` — *permanent* focus, the request an app makes when it is the thing the
+   user chose to listen to. The system answers it by stopping everything else for good, and a
+   permanent loss is not something the loser retries: opening Domofon stopped Spotify and
+   closing it brought nothing back (Artur, live testing 2026-07-29). `GateAudioFocus` requests
+   `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` by hand instead.
+
+   There is **no one-line version**, and the reason is worth keeping: media3's
+   `AudioFocusManager.setAudioAttributes` ends with `checkArgument(focusGain == AUDIOFOCUS_GAIN
+   || focusGain == 0, "Automatic handling of audio focus is only available for USAGE_MEDIA and
+   USAGE_GAME.")`, and that method is only reached when `handleAudioFocus` is true — so
+   switching the usage to one that maps to a ducking request while leaving automatic handling
+   on throws at the first frame. Owning the request means owning the losses, and every one of
+   them is a **volume change**: this is a live stream, and a paused live stream accumulates a
+   backlog it can only shed by seeking, so pausing for a nav prompt means coming back a
+   prompt's worth of time behind the gate. A refused request is silence, not an error — the
+   picture is the point and the sound is an extra.
 4. **Switching source reopens the session but keeps the last frame.** The resolved
    `CameraFeed` is the restart key, so a change to the source or any URL reopens, while a
    change to `camera.snapshotSecs` does not — retuning cadence must not cost an RTSP
-   handshake. During the swap `Status` goes CONNECTING and the old frame stays: clearing it
+   handshake. `camera.audioEnabled` **is** part of the key and therefore does reopen, which is
+   the price of the car screen's mute button being the same global setting as the phone's
+   ([ui-car](ui-car.md) invariant 4, [D19](../architecture/decisions.md)). During the swap `Status` goes CONNECTING and the old frame stays: clearing it
    would blink the phone panel and, worse, change the car pane's *shape* mid-session, which is
    what makes a head unit dim ([ui-car](ui-car.md)). **The status has to be visible while the
    frame is stale**, or a reopen that never connected is indistinguishable from one that

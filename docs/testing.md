@@ -40,13 +40,13 @@ Ground rules:
 | Suite | Pins |
 |---|---|
 | `domain/GateProtocolTest` | signal↔state maps, decode/attribution, encode, tx-never-retained |
-| `domain/GateStateReducerTest` | out-of-order retained burst, live-wins-ties, never-backwards, future-ts non-poisoning, reset |
+| `domain/GateStateReducerTest` | out-of-order retained burst, live-wins-ties, never-backwards, future-ts non-poisoning, reset, `retained` carried through as `GateState.live` |
 | `domain/GatePolicyTest` | primaryAction + the full status-line matrix (incl. DEGRADED ≡ CONNECTED), audio-notice wording |
 | `domain/ReconnectPolicyTest` | 1 s→30 s doubling, reset |
 | `domain/HomeDistanceFormatTest` | zone bands vs radius, rounding, locale-pinned dot |
 | `domain/HomeFenceCrossingTest` | the in-app fence rule: first reading never fires, inward-only, re-arms on leaving, `reset()`; `sideOf`'s accuracy margin, incl. "a coarse fix cannot manufacture a crossing between two good ones" |
 | `domain/GeofenceStatusTest` | the Settings row's three-failures split, rejection-newer-than-delivery; and the arrival guard — cross-trigger dedup, **a second crossing minutes later still announces**, pop-up-still-on-screen, TTL < window ordering, side never refuses |
-| `domain/StateChangeAnnouncerTest` | the whole notification "whether" table: learning is not news, own-tap silence consumed by one change, surface-visible suppression |
+| `domain/StateChangeAnnouncerTest` | the whole notification "whether" table: retained is never news (including a burst that moves the state twice), a live move between known states is, surface-visible suppression, and both halves of the tap rule — the cycle you asked for from a *notification* is announced, the same one asked for from a *screen* is not |
 | `domain/NotificationSlotTest` | the gate event's two ids: an isolated event uses the primary, the second half of a cycle uses the spare, other kinds never displace it, both-live self-heals |
 | `domain/GateTimestampTest` | `HH:mm` from a wire `ts` and from an observed epoch; 24-hour always; the two wire forms and the raw-string fallback |
 | `domain/camera/JpegDataUriTest` | the QML bridge's frame encoding: prefix, round-trip, uniqueness, no line breaks |
@@ -54,8 +54,9 @@ Ground rules:
 | `domain/config/CameraSettingsRowsTest` | which camera rows each source shows, and that `ALL` covers every one |
 | `data/mqtt/ConnectionErrorMessagesTest` | cause-chain walk (bounded), name-matched shaded timeouts |
 | `data/mqtt/GateServiceTest` | lease lifecycle, stale-handle silence, wire rebuild, watchdog, backoff, teardown semantics, command paths, awaitFreshState settle |
+| `data/mqtt/CommandFollowThroughTest` | the connection outlives the command that opened it and the gate's live answer lands, the hold covers a cycle then lets go, re-arming never drops it, `disarm()` releases — **including before the timer has started**, which is the ordering the failure path produces |
 | `data/camera/CameraFrameGrabberTest` | session lifecycle: **close completes before the next open**, reopen on a feed change, *no* reopen on an interval change, retired sources cannot report, `stop()`+`start()` never overlap |
-| `ui/shared/GateViewModelTest` | derivation + eager initial value, independent picture/audio health |
+| `ui/shared/GateViewModelTest` | derivation + eager initial value, independent picture/audio health, the global audio setting reaching every surface and the car's mute writing the value the phone reads |
 
 What is still untested in `data/camera` is everything that needs a device — the players, the
 EGL readback, the HTTP fetch. The *lifecycle* is now covered: `CameraFrameGrabber` takes flows
@@ -130,8 +131,19 @@ small changes is phone-cold-start + one command + one DHU look.
       picture swaps in place, the last frame stays up until the new source delivers, and the
       head unit does not dim
 - [ ] Primary button flips Open⇄Close with state — **including mid-travel**: `opening` must
-      read "Close gate", `closing` must read "Open gate". Stop always present; unconfigured
-      message points at the phone; icons visible on a light host theme
+      read "Close gate", `closing` must read "Open gate". Unconfigured message points at the
+      phone; icons visible on a light host theme. **Stop is no longer on this screen** (D19) —
+      the second button is the audio toggle
+- [ ] **Open Domofon on the head unit, switch to Maps, move the gate from the wall button,
+      switch back** → the pane already reads the new state. A pane still showing the old one is
+      the `invalidate()`-below-STARTED defect; it fails silently, so nothing in the log will
+      say so
+- [ ] **Audio toggle**: with Spotify playing, open Domofon → the music **ducks** and comes back
+      to full volume on close, rather than stopping for good. Tap the toggle → gate audio stops,
+      Spotify is untouched, the label flips to "Unmute gate", and the picture blinks through
+      *connecting* for a second or two while the RTSP session reopens. Check the phone's
+      Settings → Camera audio switch now shows the new value — it is one setting, not two.
+      If the gate is inaudible under ducked music, say so: the fallback is in D19
 
 **Notifications**
 - [ ] Open the phone app, then the car app, then Settings → **no** heads-up from any of them
@@ -142,7 +154,13 @@ small changes is phone-cold-start + one command + one DHU look.
       event id was still occupied. Cycle the gate twice more — every announcement gets one
 - [ ] After that, exactly **one** gate-event entry is in the shade, not two (the old slot is
       cancelled before the new one posts)
-- [ ] Tap Open in the app → **no** pop-up for `opening`, pop-up for `opened`
+- [ ] Tap Open **in the app, with the app in front** → no pop-up for `opening` *or* `opened`.
+      Both are things the screen in front of you is already showing (D18)
+- [ ] **Tap *Open gate* on a heads-up with Domofon backgrounded on the DHU** → `Gate: opening`
+      draws a heads-up within a second or two, and `Gate: opened` about twenty seconds later
+      draws another. This is the D17/D18 pair: silence for the whole cycle means the connection
+      was dropped before the gate answered, and silence only on `opening` means the own-tap
+      rule has come back from somewhere
 - [ ] Locked phone + requireUnlock → toast refusal; body hidden on the lock screen
 - [ ] Broker unreachable → failure notification after the action
 - [ ] **Exactly one** notification per state change with phone *and* car open

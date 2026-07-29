@@ -40,6 +40,13 @@ data class GateUiState(
     val cameraStatus: CameraFrameGrabber.Status,
 
     /**
+     * Whether gate audio is switched on — the global `camera.audioEnabled` setting, not a
+     * per-surface one. The car pane renders it as a toggle so the driver can silence the gate
+     * without leaving the head unit; the Settings switch is the same value and stays in step.
+     */
+    val audioEnabled: Boolean,
+
+    /**
      * Pre-worded reason the gate is silent; "" hides the line.
      *
      * Only ever non-empty on the HTTP camera path, whose audio is a stream of its own — see

@@ -72,6 +72,20 @@ class GateStateReducerTest {
     }
 
     @Test
+    fun `the retained flag is carried through as live`() {
+        // StateChangeAnnouncer's whole rule 1 rides on this: a retained message is the broker
+        // replaying its memory, and nothing downstream can tell the two apart otherwise.
+        assertEquals(
+            false,
+            reducer.reduce(signal("closed", "2026-07-25T11:40:10Z", retained = true))?.live,
+        )
+        assertEquals(
+            true,
+            reducer.reduce(signal("opening", "2026-07-25T11:40:20Z", retained = false))?.live,
+        )
+    }
+
+    @Test
     fun `reset forgets the connection's memory`() {
         reducer.reduce(signal("closed", "2026-07-25T11:40:10Z", retained = true))
         reducer.reset()

@@ -332,43 +332,6 @@ class GateServiceTest {
         assertEquals(0, transport.handles.size)
     }
 
-    // --- lastCommandAtMs: what tells "the gate moved" from "I moved the gate" ----------
-
-    @Test
-    fun `no command means no timestamp`() = runTest {
-        assertEquals(0L, service().lastCommandAtMs)
-    }
-
-    @Test
-    fun `a command stamps the clock even when it fails to send`() = runTest {
-        val service = service()
-        val before = System.currentTimeMillis()
-        val result = async { service.sendCommandAwait("open") }
-        advanceTimeBy(8_100)
-
-        // The send failed outright...
-        assertFalse(result.await())
-        // ...and it is still stamped. The user tapped a button; whatever the gate does next
-        // is not news to them, and StateChangeAnnouncer needs to know that.
-        assertTrue(service.lastCommandAtMs >= before)
-    }
-
-    @Test
-    fun `an unknown action is not a command and does not stamp`() = runTest {
-        val service = service()
-        assertFalse(service.sendCommandAwait("selfdestruct"))
-        assertEquals(0L, service.lastCommandAtMs)
-    }
-
-    @Test
-    fun `fire-and-forget sendCommand stamps too`() = runTest {
-        // The phone and car buttons take this path, not sendCommandAwait directly.
-        val service = service()
-        service.sendCommand("open")
-        runCurrent()
-        assertTrue(service.lastCommandAtMs > 0L)
-    }
-
     @Test
     fun `degraded still counts as connected for a command`() = runTest {
         val service = service()

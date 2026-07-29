@@ -18,7 +18,9 @@ import pl.bitforge.domofon.container
  * screen sends the command without ever opening the app.
  *
  * A receiver, not a service: the work is one publish. [goAsync] buys roughly ten seconds,
- * and connect + publish over the VPN lands in one or two.
+ * and connect + publish over the VPN lands in one or two. What outlives that is the
+ * [CommandFollowThrough] hold — the connection stays claimed past this receiver so the gate's
+ * answer has somewhere to land; see that class for why the tail of it is best-effort.
  *
  * `exported="false"`, so nothing outside this app can broadcast to it directly. It is not
  * the only caller worth worrying about, though — see [refuseWhileLocked].
@@ -44,6 +46,13 @@ class GateCommandReceiver : BroadcastReceiver() {
         // never cancelled, so a hung send leaked its Job past the receiver forever. The
         // timeout keeps the work inside goAsync's ~10 s budget with margin for the
         // failure notification.
+        // Before the send, not after: sendCommandAwait releases its own lease the instant the
+        // broker acks the publish, and the gate does not report back for another second or
+        // two. Overlapping the two claims is what keeps the app attached long enough to hear
+        // the answer — and hearing it is the only feedback this button has, since the
+        // notification that carried it is already gone. See [CommandFollowThrough].
+        app.container.commandFollowThrough.arm()
+
         val pending = goAsync()
         app.container.appScope.launch {
             try {
@@ -53,7 +62,11 @@ class GateCommandReceiver : BroadcastReceiver() {
                 Log.i(TAG, "notification action '$action' -> ${if (ok) "sent" else "FAILED"}")
                 // The dismissal above was the acknowledgement. Without this, a command that
                 // never left the phone looks exactly like one that worked.
-                if (!ok) app.container.gateNotifier.notifyCommandFailed(app, action)
+                if (!ok) {
+                    // Nothing is coming, so stop holding the connection open for it.
+                    app.container.commandFollowThrough.disarm()
+                    app.container.gateNotifier.notifyCommandFailed(app, action)
+                }
             } finally {
                 pending.finish()
             }

@@ -38,6 +38,13 @@ class GateViewModel(
     /** The newest camera frame, delivered beside [uiState] — see [GateUiState] for why. */
     val frame: StateFlow<CameraFrame?>,
     distance: StateFlow<HomeDistanceTracker.Reading?>,
+    /**
+     * Writes the global gate-audio setting — a lambda rather than the `ConfigStore` itself,
+     * for the same reason every input here is a flow: the store is the Android half, and this
+     * class has to stay drivable from a JVM test. The value comes back through [config], so
+     * there is no second copy of it to drift.
+     */
+    private val setAudio: (Boolean) -> Unit,
     scope: CoroutineScope,
 ) {
 
@@ -67,6 +74,17 @@ class GateViewModel(
             )
 
     fun send(action: String) = gate.sendCommand(action)
+
+    /**
+     * Turn gate audio on or off, everywhere.
+     *
+     * Deliberately the same setting the phone's Settings switch writes rather than a
+     * surface-local mute: one lever, and the car cannot end up disagreeing with the phone
+     * about whether the gate is audible. It costs a camera-session reopen — `audioEnabled` is
+     * part of `CameraFeed` identity, so the RTSP handshake runs again (1-3 s over the VPN,
+     * with the last still left on screen throughout).
+     */
+    fun setAudioEnabled(enabled: Boolean) = setAudio(enabled)
 
     private data class Backend(
         val gateState: GateState,
@@ -98,6 +116,7 @@ class GateViewModel(
             ),
             cameraConfigured = backend.config.camera.hasPicture,
             cameraStatus = camera.frames,
+            audioEnabled = backend.config.camera.audioEnabled,
             audioNotice = GatePolicy.cameraAudioNotice(camera.audio),
         )
     }

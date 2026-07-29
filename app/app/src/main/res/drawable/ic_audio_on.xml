@@ -1,0 +1,11 @@
+<!-- A speaker with two waves. Deliberately not in the gate-arrow family: this button acts on
+     the sound, not on the gate, and sits right beside one that does. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,9v6h4l5,5V4L8,9zM16.5,12c0,-1.6 -0.9,-3 -2.2,-3.7v7.4c1.3,-0.7 2.2,-2.1 2.2,-3.7zM14.3,3.5v2.1c2.6,0.8 4.5,3.2 4.5,6.4s-1.9,5.6 -4.5,6.4v2.1c3.7,-0.8 6.5,-4.2 6.5,-8.5S18,4.3 14.3,3.5z"/>
+</vector>

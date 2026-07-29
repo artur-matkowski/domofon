@@ -31,8 +31,17 @@ class GateViewModelTest {
     private val frame = MutableStateFlow<CameraFrame?>(null)
     private val distance = MutableStateFlow<HomeDistanceTracker.Reading?>(null)
 
+    /**
+     * Stands in for the `ConfigStore` write. Writing straight back into [config] is what the
+     * real one does the long way round — `putBoolean` lands in SharedPreferences, whose change
+     * listener reparses into the flow — so the round trip is the behaviour under test.
+     */
+    private val setAudio: (Boolean) -> Unit = { enabled ->
+        config.value = config.value.copy(camera = config.value.camera.copy(audioEnabled = enabled))
+    }
+
     private fun TestScope.viewModel(gate: GateService) =
-        GateViewModel(gate, config, cameraHealth, frame, distance, backgroundScope)
+        GateViewModel(gate, config, cameraHealth, frame, distance, setAudio, backgroundScope)
 
     private fun TestScope.gate() = GateService(
         transport = transport,
@@ -140,6 +149,35 @@ class GateViewModelTest {
         )
         runCurrent()
         assertEquals("", vm.uiState.value.audioNotice)
+    }
+
+    @Test
+    fun `the global audio setting reaches every surface`() = runTest {
+        val vm = viewModel(gate())
+        // Default on, so the car pane opens offering to mute rather than to unmute.
+        assertTrue(vm.uiState.value.audioEnabled)
+
+        config.value = completeConfig.copy(
+            camera = completeConfig.camera.copy(audioEnabled = false),
+        )
+        runCurrent()
+        assertFalse(vm.uiState.value.audioEnabled)
+    }
+
+    @Test
+    fun `the car's mute button writes the setting the phone reads`() = runTest {
+        // One lever, not a surface-local mute: the value goes out through the config store and
+        // comes back through the same flow the Settings switch renders.
+        val vm = viewModel(gate())
+
+        vm.setAudioEnabled(false)
+        runCurrent()
+        assertFalse(vm.uiState.value.audioEnabled)
+        assertFalse(config.value.camera.audioEnabled)
+
+        vm.setAudioEnabled(true)
+        runCurrent()
+        assertTrue(vm.uiState.value.audioEnabled)
     }
 
     @Test
